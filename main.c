@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
+#define PIPE_NAME "nao_sei_q_nome_dar"
 
 struct config{
     int unidade;
@@ -34,6 +35,7 @@ void print_struct(struct config* conf){
     printf("qtdc: %d\n",conf->qtd_max_chegadas);
 }
 
+
 struct config* read_config(struct config* conf){
     FILE*f=fopen("config.txt","r");
     fscanf(f,"%d\n%d, %d\n%d, %d\n%d, %d\n%d\n%d",&conf->unidade,&conf->duracao_descolagem,&conf->int_descolagem,&conf->duracao_aterragem,&conf->int_aterragem,&conf->hold_min,&conf->hold_max,&conf->qtd_max_partidas,&conf->qtd_max_chegadas);
@@ -44,8 +46,27 @@ int inicia(){
     int message_queue;
     struct config* config=malloc(sizeof(struct config));
     config=read_config(config);
-    print_struct(config);
+    //print_struct(config);
     pid_t processo;
+
+    //PIPE
+    if ((mkfifo(PIPE_NAME, O_CREAT|O_EXCL|0600)<0) && (errno!= EEXIST)) {
+        perror("Erro ao criar o pipe: ");
+        exit(0);
+    }else printf("Pipe criado!\n");
+
+    /*
+    int fd;
+    if ((fd = open(PIPE_NAME, O_RDONLY)) < 0) { //ler do pipe
+        perror("Erro ao ler o pipe: ");
+        exit(0);
+    }else printf("pipe lido\n");
+
+  
+    if ((fd = open(PIPE_NAME, O_WRONLY)) < 0) { //escrever no pipe
+        perror("Erro ao escrever no pipe: ");
+        exit(0);
+    }else printf("pipe escrevido");*/
 
     //MQ
     if ((message_queue = msgget(IPC_PRIVATE, IPC_CREAT | 0700))==-1){
@@ -63,7 +84,6 @@ int inicia(){
     }
     return 0;
 }
-
 
 int main() {
     inicia();
