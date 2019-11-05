@@ -1,9 +1,9 @@
+#include <stdlib.h>
+#include <stdio.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <semaphore.h>
 #include <unistd.h>
-#include <stdlib.h>
-#include <stdio.h>
 #include <sys/mman.h>
 #include <sys/stat.h>   
 #include <fcntl.h> 
