@@ -1,9 +1,9 @@
-#include <stdlib.h>
-#include <stdio.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <semaphore.h>
 #include <unistd.h>
+#include <stdlib.h>
+#include <stdio.h>
 #include <sys/mman.h>
 #include <sys/stat.h>   
 #include <fcntl.h> 
@@ -34,30 +34,39 @@ void print_struct(struct config* conf){
     printf("qtdc: %d\n",conf->qtd_max_chegadas);
 }
 
-
 struct config* read_config(struct config* conf){
     FILE*f=fopen("config.txt","r");
     fscanf(f,"%d\n%d, %d\n%d, %d\n%d, %d\n%d\n%d",&conf->unidade,&conf->duracao_descolagem,&conf->int_descolagem,&conf->duracao_aterragem,&conf->int_aterragem,&conf->hold_min,&conf->hold_max,&conf->qtd_max_partidas,&conf->qtd_max_chegadas);
     return conf;
 }
 
-void inicia(){
+int inicia(){
+    int message_queue;
     struct config* config=malloc(sizeof(struct config));
     config=read_config(config);
-    //print_struct(config);
+    print_struct(config);
     pid_t processo;
+
+    //MQ
+    if ((message_queue = msgget(IPC_PRIVATE, IPC_CREAT | 0700))==-1){
+        printf("Erro ao criar a message queue!\n");
+        return -1;
+    }else printf("Message queue criada!\n");
+
     processo=fork();
     if(processo==0){
-        printf("ID da torre de controlo: %d\n",pid());
+        printf("PID da torre de controlo: %d\n",getpid());
     }
 
     else{
-        printf("Nao sou a torre de controlo!\n");
+        printf("PID do gestor de simulacao: %d\n",getpid());
     }
+    return 0;
 }
 
 
 int main() {
     inicia();
+    wait(NULL);
     return 0;
 }
