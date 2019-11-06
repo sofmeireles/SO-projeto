@@ -48,25 +48,26 @@ int inicia(){
     config=read_config(config);
     //print_struct(config);
     pid_t processo;
-
+    int fd;
+    char ola="ola";
+    pid_t child_id = fork();
+    
     //PIPE
     if ((mkfifo(PIPE_NAME, O_CREAT|O_EXCL|0600)<0) && (errno!= EEXIST)) {
         perror("Erro ao criar o pipe: ");
         exit(0);
     }else printf("Pipe criado!\n");
 
-    /*
-    int fd;
     if ((fd = open(PIPE_NAME, O_RDONLY)) < 0) { //ler do pipe
         perror("Erro ao ler o pipe: ");
         exit(0);
-    }else printf("pipe lido\n");
+    }
+    else{
+        read(fd,ola,sizeof(ola));
+        printf("pipe lido: %s\n",ola);
+    }
+    //para escrever no pipe abrir outro terminal e escrever echo "cena">nao_sei_q_nome_dar
 
-  
-    if ((fd = open(PIPE_NAME, O_WRONLY)) < 0) { //escrever no pipe
-        perror("Erro ao escrever no pipe: ");
-        exit(0);
-    }else printf("pipe escrevido");*/
 
     //MQ
     if ((message_queue = msgget(IPC_PRIVATE, IPC_CREAT | 0700))==-1){
