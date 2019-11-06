@@ -1,18 +1,19 @@
+#include <stdlib.h>
+#include <stdio.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <semaphore.h>
 #include <unistd.h>
-#include <stdlib.h>
-#include <stdio.h>
 #include <sys/mman.h>
 #include <sys/stat.h>   
-#include <fcntl.h> 
+#include <fcntl.h>
 #include <sys/types.h> 
 #include <sys/wait.h> 
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
-#define PIPE_NAME "nao_sei_q_nome_dar"
+#include <time.h>
+#define PIPE_NAME "input_pipe"
 
 struct config{
     int unidade;
@@ -49,8 +50,7 @@ int inicia(){
     //print_struct(config);
     pid_t processo;
     int fd;
-    char ola="ola";
-    pid_t child_id = fork();
+    char comando[1000];
     
     //PIPE
     if ((mkfifo(PIPE_NAME, O_CREAT|O_EXCL|0600)<0) && (errno!= EEXIST)) {
@@ -58,15 +58,15 @@ int inicia(){
         exit(0);
     }else printf("Pipe criado!\n");
 
-    if ((fd = open(PIPE_NAME, O_RDONLY)) < 0) { //ler do pipe
+    if ((fd = open(PIPE_NAME, O_RDONLY, O_WRONLY)) < 0) { //ler do pipe
         perror("Erro ao ler o pipe: ");
         exit(0);
     }
     else{
-        read(fd,ola,sizeof(ola));
-        printf("pipe lido: %s\n",ola);
+        read(fd,comando,1000);
+        printf("pipe lido: %s\n",comando);
     }
-    //para escrever no pipe abrir outro terminal e escrever echo "cena">nao_sei_q_nome_dar
+    //para escrever no pipe abrir outro terminal e escrever echo "cena">input_pipe
 
 
     //MQ
@@ -78,6 +78,7 @@ int inicia(){
     processo=fork();
     if(processo==0){
         printf("PID da torre de controlo: %d\n",getpid());
+        execl("torre","torre");
     }
 
     else{
@@ -85,6 +86,18 @@ int inicia(){
     }
     return 0;
 }
+
+void ficheiro_log(char* mensagem){
+    FILE *f=fopen("log.txt","a");
+    time_t horas;
+    struct tm* time_struct;
+    
+    time(&horas);
+    time_struct = localtime(&horas);
+    fprintf(f,"%d:%d:%d %s\n",time_struct->tm_hour,time_struct->tm_min,time_struct->tm_sec,mensagem);
+    printf("%d:%d:%d %s\n",time_struct->tm_hour,time_struct->tm_min,time_struct->tm_sec,mensagem);
+}
+
 
 int main() {
     inicia();
