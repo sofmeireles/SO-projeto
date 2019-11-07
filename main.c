@@ -58,6 +58,8 @@ bool validacao(char * mensagem){
     char* token;
     char* dem="\t";
     int i=1;
+    
+    voo->holding=0;
 
     //DEPARTURE or ARRIVAL
     token=strtok(mensagem,dem);
@@ -73,6 +75,7 @@ bool validacao(char * mensagem){
 
     while(token !=NULL){
         token=strtok(NULL,dem);
+        //printf("token: %s\n",token);
         if (i==1){ //flight_code
             if (strncmp("TP",token,2)!=0) return false;
             else{
@@ -98,6 +101,7 @@ bool validacao(char * mensagem){
                 voo->eta=0;
                 voo->fuel=0;
                 voo->takeoff=atoi(token);
+                return true;
                 //printf("takeoff:%d\n",voo->takeoff);
             }
             else{
@@ -155,9 +159,10 @@ int inicia(){
     if ((message_queue = msgget(IPC_PRIVATE, IPC_CREAT | 0700))==-1){
         printf("Erro ao criar a message queue!\n");
         return -1;
-    }else printf("Message queue criada!\n");
+    }//else printf("Message queue criada!\n");
 
     processo=fork();
+    /*
     if(processo==0){
         printf("PID da torre de controlo: %d\n",getpid());
         execl("torre","torre");
@@ -165,7 +170,7 @@ int inicia(){
 
     else{
         printf("PID do gestor de simulacao: %d\n",getpid());
-    }
+    }*/
     return 0;
 }
 
