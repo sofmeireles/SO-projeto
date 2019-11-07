@@ -13,7 +13,7 @@
 #include <errno.h>
 #include <string.h>
 #include <time.h>
-#define PIPE_NAME "input_pipe"
+#define PIPE_NAME "/tmp/input_pipe"
 
 struct config{
     int unidade;
