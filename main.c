@@ -14,6 +14,8 @@
 #include <string.h>
 #include <time.h>
 #include <stdbool.h>
+#include <pthread.h>
+#include <sys/msg.h>
 #define PIPE_NAME "/tmp/input_pipe"
 
 //variaveis globais
@@ -121,7 +123,7 @@ bool validacao(char * mensagem){
     return true;
 }
 
-void ler_pipe(){
+void le_comandos(){
     int fd;
     char comando[1000];
     if ((fd = open(PIPE_NAME, O_RDONLY, O_WRONLY)) < 0) { //ler do pipe
@@ -144,17 +146,32 @@ void cria_pipe(){
     }else printf("Pipe criado!\n");
 }
 
+void* thread_leitura(void* idp){
+    while(1){	
+    le_comandos();
+    }
+
+    pthread_exit(NULL);
+    return NULL;
+}
+
 int inicia(){
     int message_queue;
+    pid_t processo;
+    pthread_t pipe_thread;
+    int pipe_thread_id;
     read_config();
     //print_struct();
-    pid_t processo;
+    
     
     //PIPE
     cria_pipe();
     //para escrever no pipe abrir outro terminal e escrever echo "cena">input_pipe
-    ler_pipe();
-
+    
+    //THREAD que lê o pipe
+    pthread_create(&pipe_thread,NULL,thread_leitura,&pipe_thread_id);
+    
+    
     //MQ
     if ((message_queue = msgget(IPC_PRIVATE, IPC_CREAT | 0700))==-1){
         printf("Erro ao criar a message queue!\n");
@@ -171,6 +188,7 @@ int inicia(){
     else{
         printf("PID do gestor de simulacao: %d\n",getpid());
     }*/
+    pthread_join(pipe_thread,NULL);
     return 0;
 }
 
