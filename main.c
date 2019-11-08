@@ -14,6 +14,7 @@
 #include <string.h>
 #include <time.h>
 #include <stdbool.h>
+#include <ctype.h>
 #include <pthread.h>
 #include <sys/msg.h>
 #define PIPE_NAME "/tmp/input_pipe"
@@ -32,7 +33,7 @@ int qtd_max_chegadas;
 //structs
 struct flight{
     int type; //departure = 1, arrival = 2
-    char code[10];
+    char code[20];
     int init;
     int takeoff;
     int eta;
@@ -55,6 +56,15 @@ void read_config(){
     fscanf(f,"%d\n%d, %d\n%d, %d\n%d, %d\n%d\n%d",&unidade,&duracao_descolagem,&int_descolagem,&duracao_aterragem,&int_aterragem,&hold_min,&hold_max,&qtd_max_partidas,&qtd_max_chegadas);
 }
 
+bool verifica_numero(char* str, int fim){
+    int i;
+    for(i=0;i<fim;i++){
+        if(isdigit(str[i])==0)
+            return false;
+    }
+    return true;
+}
+
 bool validacao(char * mensagem){
     struct flight* voo=malloc(sizeof(struct flight));
     char* token;
@@ -67,30 +77,31 @@ bool validacao(char * mensagem){
     token=strtok(mensagem,dem);
     if (strcmp(token,"ARRIVAL")==0){
         voo->type=2;
-        //printf("[%d] Arrival\n",voo->type);
+        printf("[%d] Arrival\n",voo->type);
     }
     else if(strcmp(token,"DEPARTURE")==0){
         voo->type=1;
-        //printf("[%d] Departure\n",voo->type);
+        printf("[%d] Departure\n",voo->type);
     }
     else return false;
 
     while(token !=NULL){
         token=strtok(NULL,dem);
-        //printf("token: %s\n",token);
+        //printf("token [%d]: %s\n",i,token);
         if (i==1){ //flight_code
-            if (strncmp("TP",token,2)!=0) return false;
+            if (strncmp("TP",token,2)!=0 || verifica_numero(token+2,strlen(token+2))==false)
+                return false;
             else{
                 strcpy(voo->code,token);
-                //printf("%s\n",voo->code);
+                printf("%s\n",voo->code);
             }
         }
         else if(i==2){
             if(strcmp(token,"init:")!=0) return false;
         }
-        else if(i==3){
+        else if(i==3 && verifica_numero(token,strlen(token))==true){
             voo->init=atoi(token);
-            //printf("init:%d\n",voo->init);
+            printf("init:%d\n",voo->init);
         }
         else if(i==4){
             if(strcmp("takeoff:",token)!=0 && strcmp("eta:",token)!=0) return false;
@@ -99,22 +110,29 @@ bool validacao(char * mensagem){
             if(strcmp("fuel:",token)!=0) return false;
         }
         else if(i==5 || i==7){
+		if(verifica_numero(token,strlen(token))==false){
+			printf("token: %s. len: %d\n",token,(int)strlen(token));
+		        printf("fodeu\n");
+		        return false;
+		    }
             if(voo->type==1){
                 voo->eta=0;
                 voo->fuel=0;
                 voo->takeoff=atoi(token);
+                printf("takeoff:%d\n",voo->takeoff);
                 return true;
-                //printf("takeoff:%d\n",voo->takeoff);
+                
             }
             else{
                 voo->init=0;
                 if(i==5){
                     voo->eta=atoi(token);
-                    //printf("eta:%d\n",voo->eta);
+                    printf("eta:%d\n",voo->eta);
                 }
                 else{
                     voo->fuel = atoi(token);
-                    //printf("fuel:%d\n", voo->fuel);
+                    printf("fuel:%d\n", voo->fuel);
+                    return true;
                 }
             }
         }
