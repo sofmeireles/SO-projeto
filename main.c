@@ -159,7 +159,6 @@ int inicia(){
     if ((message_queue = msgget(IPC_PRIVATE, IPC_CREAT | 0700))==-1){
         printf("Erro ao criar a message queue!\n");
         return -1;
-    }else printf("Message queue criada!\n");
 
     processo=fork();
     /*
