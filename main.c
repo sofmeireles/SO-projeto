@@ -38,6 +38,18 @@ struct flight{
     int holding;
     struct voo * next;
 };
+typedef struct{
+  int num_voos_cria;
+  int num_voos_atr;
+  int temp_de_esp_atr;
+  int num_voos_desc;
+  int temp_de_esp_desc;
+  int m_mh_atr;
+  int m_mh_hurg;
+  int num_voos_red;
+  int voos_rejeitados;
+}mem_structure;
+mem_structure *data;
 
 void print_struct(){
     printf("ua: %d\n",unidade);
@@ -171,6 +183,23 @@ int inicia(){
     else{
         printf("PID do gestor de simulacao: %d\n",getpid());
     }*/
+	
+  //memoria partilhada
+  shmid = shmget(IPC_PRIVATE, sizeof(mem_structure), IPC_CREAT | 0766);//ver PL4 2 stockmarcket
+  if(shmid < 0){
+	printf("ERRO na criacao da memoria\n");
+	exit(-1);
+  }
+
+  data = (mem_structure*)shmat(shmid, NULL, 0);
+  if(data == (mem_structure*)-1){
+    printf("ERRO no mapeamento da memoria\n");
+    exit(-1);
+  }
+  else{
+    printf("Memoria mapeada\n");
+  }
+	
     return 0;
 }
 
