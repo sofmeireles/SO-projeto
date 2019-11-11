@@ -51,6 +51,7 @@ int qtd_max_partidas;
 int qtd_max_chegadas;
 struct arrival* header_arrivals;
 struct departure* header_departures;
+pthread_mutex_t mutex;
 
 
 void print_struct(){
@@ -91,6 +92,22 @@ void add_arrival(struct arrival* header, struct arrival* node){
 		node->next=header->next;
     header->next=node;
     printf("added arrival\n");
+}
+
+void ve_inits(){
+		struct departure* dep=header_departures;
+	  struct arrival* arr=header_arrivals;
+	  
+	  //ver nos departures
+    while(dep->next != NULL){
+        printf("init: %d\n",dep->next->init);
+        dep=dep->next;
+    }
+    //ver nos arrivals    
+    while(arr->next != NULL){
+        printf("init: %d\n",arr->next->init);
+        arr=arr->next;
+    }
 }
 
 void ficheiro_log(char* mensagem);
@@ -246,6 +263,7 @@ void le_comandos(){
     print_departures(header_departures);
     printf("######### ARRIVALS #########\n");
     print_arrivals(header_arrivals);
+    //ve_inits();
     
 }
 
@@ -283,10 +301,15 @@ int inicia(){
     //PIPE
     cria_pipe();
     //para escrever no pipe abrir outro terminal e escrever echo "cena">input_pipe
-
+		
     //THREAD que lê o pipe
     pthread_create(&pipe_thread,NULL,thread_leitura,&pipe_thread_id);
 
+    //Inicia mutex
+    if (pthread_mutex_init(&mutex, NULL) != 0){
+        printf("Erro ao inicializar o mutex\n");
+        return -1;
+    }
 
     //MQ
     if ((message_queue = msgget(IPC_PRIVATE, IPC_CREAT | 0700))==-1){
@@ -310,7 +333,7 @@ int inicia(){
 }
 
 void ficheiro_log(char* mensagem){
-    //mutex
+    pthread_mutex_lock(&mutex);
     FILE *f=fopen("log.txt","a");
     time_t horas;
     struct tm* time_struct;
@@ -320,7 +343,7 @@ void ficheiro_log(char* mensagem){
     fprintf(f,"%d:%d:%d %s",time_struct->tm_hour,time_struct->tm_min,time_struct->tm_sec,mensagem);
     printf("%d:%d:%d %s",time_struct->tm_hour,time_struct->tm_min,time_struct->tm_sec,mensagem);
  		fclose(f);
-    //mutex
+    pthread_mutex_unlock(&mutex);
 }
 
 
