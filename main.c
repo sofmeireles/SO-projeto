@@ -17,12 +17,13 @@
 #include <ctype.h>
 #include <pthread.h>
 #include <sys/msg.h>
+#include <signal.h>
+#include <time.h>
 #define PIPE_NAME "/tmp/input_pipe"
-
+#define MAX_THREADS 5000
 
 //structs
 struct departure{
-    //departure = 1, arrival = 2
     char code[20];
     int init;
     int takeoff;
@@ -39,6 +40,19 @@ struct arrival{
     struct arrival * next;
 };
 
+typedef struct{
+  int num_voos_cria;
+  int num_voos_atr;
+  int temp_de_esp_atr;
+  int num_voos_desc;
+  int temp_de_esp_desc;
+  int m_mh_atr;
+  int m_mh_hurg;
+  int num_voos_red;
+  int voos_rejeitados;
+}mem_structure;
+mem_structure *data;
+
 //variaveis globais
 int unidade;
 int duracao_descolagem;
@@ -49,6 +63,11 @@ int hold_max;
 int hold_min;
 int qtd_max_partidas;
 int qtd_max_chegadas;
+int shmid;
+int j=0;
+int time_init;
+pthread_t thread_voos[MAX_THREADS];
+int ids[MAX_THREADS];
 struct arrival* header_arrivals;
 struct departure* header_departures;
 pthread_mutex_t mutex;
@@ -94,28 +113,13 @@ void add_arrival(struct arrival* header, struct arrival* node){
     printf("added arrival\n");
 }
 
-void ve_inits(){
-		struct departure* dep=header_departures;
-	  struct arrival* arr=header_arrivals;
-	  
-	  //ver nos departures
-    while(dep->next != NULL){
-        printf("init: %d\n",dep->next->init);
-        dep=dep->next;
-    }
-    //ver nos arrivals    
-    while(arr->next != NULL){
-        printf("init: %d\n",arr->next->init);
-        arr=arr->next;
-    }
-}
-
 void ficheiro_log(char* mensagem);
 
 void read_config(){
     FILE*f=fopen("config.txt","r");
     fscanf(f,"%d\n%d, %d\n%d, %d\n%d, %d\n%d\n%d",&unidade,&duracao_descolagem,&int_descolagem,&duracao_aterragem,&int_aterragem,&hold_min,&hold_max,&qtd_max_partidas,&qtd_max_chegadas);
 }
+
 
 bool verifica_numero(char* str, int fim, int flag){
     int i;
@@ -140,7 +144,7 @@ bool verifica_code(char* token){
             dep=dep->next;
         }
     }
-    //ver nos arrivals    
+    //ver nos arrivals
     while(arr->next != NULL){
         if(strcmp(arr->next->code,token)==0){
             return false;
@@ -151,6 +155,8 @@ bool verifica_code(char* token){
     }
     return true;
 }
+
+void cria_threads_voo();
 
 bool validacao(char * mensagem){
     struct arrival* arr;
@@ -174,7 +180,7 @@ bool validacao(char * mensagem){
         //printf("[%d] Departure\n",voo->type);
     }
     else return false;
-    
+
     while(token !=NULL){
         token=strtok(NULL,dem);
         //printf("token [%d]: %s\n",i,token);
@@ -194,24 +200,34 @@ bool validacao(char * mensagem){
         else if(i==2){
             if(strcmp(token,"init:")!=0) return false;
         }
-        else if(i==3 /*&& verifica_numero(token,strlen(token),0)==true*/){
-        		if(type==1){
-        	  		dep->init=atoi(token);
-        	  }
-        	  else{
-        	  		arr->init=atoi(token);
+        else if(i==3 && verifica_numero(token,strlen(token),0)==true){
+            if(atoi(token)==(time(NULL)-time_init)){
+                cria_threads_voo();
+              }
+            else if(atoi(token) > (time(NULL)-time_init)){
+                sleep(atoi(token)-(time(NULL)-time_init));
+                cria_threads_voo();
+            }
+            else if(atoi(token) < (time(NULL)-time_init)){
+               return false;
+            }
+        	if(type==1){
+        	  	dep->init=atoi(token);
+        	}
+        	else{
+        	  	arr->init=atoi(token);
         	  }
         }
         else if(i==4){
             if(strcmp("takeoff:",token)!=0 && strcmp("eta:",token)!=0) return false;
         }
-        
+
         else if(i==6){
             if(strcmp("fuel:",token)!=0) return false;
         }
         else if(i==5 || i==7){
 
-            
+
 
             if(type==1){
             		token[strlen(token)-1]='\0';
@@ -263,8 +279,13 @@ void le_comandos(){
     print_departures(header_departures);
     printf("######### ARRIVALS #########\n");
     print_arrivals(header_arrivals);
-    //ve_inits();
-    
+
+}
+
+//função de operação das threads
+void *gere_voos(){
+  printf("criou um voo\n");
+  pthread_exit(NULL);
 }
 
 void cria_pipe(){
@@ -273,6 +294,8 @@ void cria_pipe(){
         exit(0);
     }else printf("Pipe criado!\n");
 }
+
+void ve_inits();
 
 void* thread_leitura(void* idp){
     while(1){
@@ -283,25 +306,68 @@ void* thread_leitura(void* idp){
     return NULL;
 }
 
+void cria_memoria(){
+  shmid = shmget(IPC_PRIVATE, sizeof(mem_structure), IPC_CREAT | 0766);
+  if(shmid < 0){
+      printf("ERRO na criacao da memoria\n");
+        exit(-1);
+       }
+
+       data = (mem_structure*)shmat(shmid, NULL, 0);
+       if(data == (mem_structure*)-1){
+         printf("ERRO no mapeamento da memoria\n");
+         exit(-1);
+       }
+       else{
+         printf("Memoria mapeada\n");
+       }
+}
+
+void sigint(int signum){
+  //limpar memoria partilhada
+  shmctl(shmid, IPC_RMID, NULL);
+  printf("Limpou a memoria\n");
+  //limpar threads
+  for(int i=0; i<(qtd_max_partidas+qtd_max_chegadas); i++){
+    pthread_cancel(thread_voos[i]);
+  }
+  printf("TUDO LIMPO BOSS!!!");
+  exit(0);
+}
+
+
+void cria_threads_voo(){
+  ids[j] = j;
+  if((pthread_create(&thread_voos[j], NULL, gere_voos, &ids[j])) != 0){
+    printf("ERRO a criar thread\n");
+  }
+  j++;
+  printf("criou a thread[%d]\n", ids[j]);
+}
+
 int inicia(){
     int message_queue;
     pid_t processo;
     pthread_t pipe_thread;
     int pipe_thread_id;
-    
+    signal(SIGINT, sigint);
+    time_init = time(NULL);
+	printf("time: %d",time_init);
     header_arrivals=malloc(sizeof(struct arrival));
     header_arrivals->next=NULL;
     header_departures=malloc(sizeof(struct departure));
     header_departures->next=NULL;
-    
+
     read_config();
     //print_struct();
 
+    //cira a memoria partilhada
+    cria_memoria();
 
     //PIPE
     cria_pipe();
     //para escrever no pipe abrir outro terminal e escrever echo "cena">input_pipe
-		
+
     //THREAD que lê o pipe
     pthread_create(&pipe_thread,NULL,thread_leitura,&pipe_thread_id);
 
@@ -318,7 +384,7 @@ int inicia(){
     }//else printf("Message queue criada!\n");
 
     processo=fork();
-    
+
     if(processo==0){
         printf("PID da torre de controlo: %d\n",getpid());
         //ficheiro_log(strcat("PID da torre de controlo:",(char*)getpid()));
@@ -328,6 +394,9 @@ int inicia(){
     else{
         printf("PID do gestor de simulacao: %d\n",getpid());
     }
+
+    //ve_inits();
+
     pthread_join(pipe_thread,NULL);
     return 0;
 }
