@@ -93,6 +93,7 @@ void add_arrival(struct arrival* header, struct arrival* node){
     printf("added arrival\n");
 }
 
+void ficheiro_log(char* mensagem);
 
 void read_config(){
     FILE*f=fopen("config.txt","r");
@@ -107,15 +108,6 @@ bool verifica_numero(char* str, int fim, int flag){
                 return false;
         }
     }
-    /* Preciso resolver
-    else{
-    	str[strlen(str)-1]='\t';
-    	for(i=0;i<fim;i++){
-    	printf("boas : %s/",str[i]);
-		if(isdigit(str[i])==0)
-		    return false;
-    	}
-    }*/
     return true;
 }
 
@@ -165,10 +157,12 @@ bool validacao(char * mensagem){
         //printf("[%d] Departure\n",voo->type);
     }
     else return false;
-
+    
     while(token !=NULL){
         token=strtok(NULL,dem);
         //printf("token [%d]: %s\n",i,token);
+        if(token == NULL)
+        	break;
         if (i==1){ //flight_code
         	  if(verifica_code(token)== false) return false;
         	  else{
@@ -183,7 +177,7 @@ bool validacao(char * mensagem){
         else if(i==2){
             if(strcmp(token,"init:")!=0) return false;
         }
-        else if(i==3 && verifica_numero(token,strlen(token),0)==true){
+        else if(i==3 /*&& verifica_numero(token,strlen(token),0)==true*/){
         		if(type==1){
         	  		dep->init=atoi(token);
         	  }
@@ -200,14 +194,11 @@ bool validacao(char * mensagem){
         }
         else if(i==5 || i==7){
 
-            /* Ainda não funciona para este último caso
-            if(verifica_numero(token,strlen(token),1)==false){
-                printf("token: %s%d\n",token,(int)strlen(token));
-                printf("fodeu\n");
-                   return false;
-            }*/
+            
 
             if(type==1){
+            		token[strlen(token)-1]='\0';
+            		if(verifica_numero(token,strlen(token),0)==false) return false;
                 dep->takeoff=atoi(token);
                 add_departure(header_departures,dep);
                 return true;
@@ -218,6 +209,8 @@ bool validacao(char * mensagem){
                     arr->eta=atoi(token);
                 }
                 else{
+                		token[strlen(token)-1]='\0';
+                		if(verifica_numero(token,strlen(token),0)==false) return false;
                     arr->fuel = atoi(token);
                     add_arrival(header_arrivals,arr);
                     return true;
@@ -232,19 +225,24 @@ bool validacao(char * mensagem){
 
 void le_comandos(){
     int fd;
-    char comando[1000];
+    char comando[1000], str[1000], cmd[1000];
     if ((fd = open(PIPE_NAME, O_RDONLY, O_WRONLY)) < 0) { //ler do pipe
         perror("Erro ao ler o pipe: ");
         exit(0);
     }
     else{
         read(fd,comando,1000);
-        if (validacao(comando)==true)
-            printf("pipe lido com sucesso\n");
-        else
-            printf("erro ao ler o pipe\n");
+        strcpy(cmd,comando);
+        if (validacao(comando)==true){
+        		sprintf(str,"NEW COMMAND => %s\n",cmd);
+            ficheiro_log(str);
+        }
+        else{
+        		sprintf(str,"WRONG COMMAND => %s\n",cmd);
+            ficheiro_log(str);
+        }
     }
-    printf("######### Departures #########\n");
+    printf("\n######### Departures #########\n");
     print_departures(header_departures);
     printf("######### ARRIVALS #########\n");
     print_arrivals(header_arrivals);
@@ -316,11 +314,12 @@ void ficheiro_log(char* mensagem){
     FILE *f=fopen("log.txt","a");
     time_t horas;
     struct tm* time_struct;
-
+		mensagem[strlen(mensagem)-1]='\0';
     time(&horas);
     time_struct = localtime(&horas);
-    fprintf(f,"%d:%d:%d %s\n",time_struct->tm_hour,time_struct->tm_min,time_struct->tm_sec,mensagem);
-    printf("%d:%d:%d %s\n",time_struct->tm_hour,time_struct->tm_min,time_struct->tm_sec,mensagem);
+    fprintf(f,"%d:%d:%d %s",time_struct->tm_hour,time_struct->tm_min,time_struct->tm_sec,mensagem);
+    printf("%d:%d:%d %s",time_struct->tm_hour,time_struct->tm_min,time_struct->tm_sec,mensagem);
+ 		fclose(f);
     //mutex
 }
 
