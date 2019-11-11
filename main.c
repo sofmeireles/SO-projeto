@@ -5,10 +5,10 @@
 #include <semaphore.h>
 #include <unistd.h>
 #include <sys/mman.h>
-#include <sys/stat.h>   
+#include <sys/stat.h>
 #include <fcntl.h>
-#include <sys/types.h> 
-#include <sys/wait.h> 
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
@@ -29,7 +29,7 @@ struct flight{
     int eta;
     int fuel;
     int holding;
-    struct voo * next;
+    struct flight * next;
 };
 
 //variaveis globais
@@ -44,7 +44,7 @@ int qtd_max_partidas;
 int qtd_max_chegadas;
 struct flight* header_voos;
 
-//funçoes de print
+
 void print_struct(){
     printf("ua: %d\n",unidade);
     printf("dd: %d, id: %d\n",duracao_descolagem,int_descolagem);
@@ -55,15 +55,18 @@ void print_struct(){
 }
 
 void print_voos(struct flight* header){
-    struct flight* atual= header->next;
+    int i=1;
+    struct flight* atual= header;
+    if(atual->next == NULL) printf("lista vazia\n");
     while(atual->next != NULL){
-        if(atual->type=0){
-            printf("DEPARTURE %s init:%d takeoff:%d",atual->code,atual->init,atual->takeoff);
+        if(atual->next->type==1){
+            printf("#%d DEPARTURE %s init:%d takeoff:%d\n",i,atual->next->code,atual->next->init,atual->next->takeoff);
         }
         else{
-            printf("ARRIVAL %s init:%d eta:%d fuel:%d",atual->code,atual->init,atual->eta,atual->fuel);
+            printf("#%d ARRIVAL %s init:%d eta:%d fuel:%d\n",i,atual->next->code,atual->next->init,atual->next->eta,atual->next->fuel);
         }
         atual=atual->next;
+        i++;
     }
 }
 
@@ -71,21 +74,23 @@ struct flight* cria_header_voos(){
     struct flight* header;
     header=malloc(sizeof(struct flight));
     if(header != NULL){
+        
         strcpy(header->code,"\0");
-        header->eta=NULL;
-        header->fuel=NULL;
-        header->holding=NULL;
-        header->init=NULL;
-        header->takeoff=NULL;
-        header->type=NULL;
+        header->eta=0;
+        header->fuel=0;
+        header->holding=0;
+        header->init=0;
+        header->takeoff=0;
+        header->type=0;
         header->next=NULL;
     }
-
+    return header;
 }
 
 void add_voo(struct flight* header,struct flight* node){
     node->next=header->next;
     header->next=node;
+    printf("added voo\n");
 }
 
 
@@ -97,10 +102,10 @@ void read_config(){
 bool verifica_numero(char* str, int fim, int flag){
     int i;
     if(flag==0){
-	    for(i=0;i<fim;i++){
-		if(isdigit(str[i])==0)
-		    return false;
-	    }
+        for(i=0;i<fim;i++){
+            if(isdigit(str[i])==0)
+                return false;
+        }
     }
     /* Preciso resolver
     else{
@@ -112,25 +117,39 @@ bool verifica_numero(char* str, int fim, int flag){
     	}
     }*/
     return true;
-}	
+}
 
-bool validacao(char * mensagem, struct flight* header_voos){
+bool verifica_code(char* token){
+	  struct flight* atual=header_voos;
+	  if(atual->next == NULL) return true;
+    while(atual->next != NULL){
+        if(strcmp(atual->next->code,token)==0){
+            return false;
+        }
+        else{
+            atual=atual->next;
+        }
+    }
+    return true;
+}
+
+bool validacao(char * mensagem){
     struct flight* voo=malloc(sizeof(struct flight));
     char* token;
     char* dem="\t";
     int i=1;
-    
+
     voo->holding=0;
 
     //DEPARTURE or ARRIVAL
     token=strtok(mensagem,dem);
     if (strcmp(token,"ARRIVAL")==0){
         voo->type=2;
-        //printf("[%d] Arrival\n",voo->type);
+        printf("[%d] Arrival\n",voo->type);
     }
     else if(strcmp(token,"DEPARTURE")==0){
         voo->type=1;
-        //printf("[%d] Departure\n",voo->type);
+        printf("[%d] Departure\n",voo->type);
     }
     else return false;
 
@@ -138,11 +157,10 @@ bool validacao(char * mensagem, struct flight* header_voos){
         token=strtok(NULL,dem);
         //printf("token [%d]: %s\n",i,token);
         if (i==1){ //flight_code
-            if (strncmp("TP",token,2)!=0 || verifica_numero(token+2,strlen(token+2),0)==false)
-                return false;
-            else{
-                strcpy(voo->code,token);
-                //printf("%s\n",voo->code);
+        	  if(verifica_code(token)== false) return false;
+        	  else{
+            	strcpy(voo->code,token);
+            	printf("%s\n",voo->code);
             }
         }
         else if(i==2){
@@ -159,21 +177,22 @@ bool validacao(char * mensagem, struct flight* header_voos){
             if(strcmp("fuel:",token)!=0) return false;
         }
         else if(i==5 || i==7){
-        
-        	/* Ainda não funciona para este último caso
-			if(verifica_numero(token,strlen(token),1)==false){
-				printf("token: %s%d\n",token,(int)strlen(token));
-		        printf("fodeu\n");
-		   	    return false;
-		    }*/
-		    
+
+            /* Ainda não funciona para este último caso
+            if(verifica_numero(token,strlen(token),1)==false){
+                printf("token: %s%d\n",token,(int)strlen(token));
+                printf("fodeu\n");
+                   return false;
+            }*/
+
             if(voo->type==1){
                 voo->eta=0;
                 voo->fuel=0;
                 voo->takeoff=atoi(token);
                 //printf("takeoff:%d\n",voo->takeoff);
+                add_voo(header_voos,voo);
                 return true;
-                
+
             }
             else{
                 voo->init=0;
@@ -184,15 +203,16 @@ bool validacao(char * mensagem, struct flight* header_voos){
                 else{
                     voo->fuel = atoi(token);
                     //printf("fuel:%d\n", voo->fuel);
+                    add_voo(header_voos,voo);
                     return true;
                 }
             }
         }
         i++;
     }
-    add_voo(header_voos,voo);
     return false;
 }
+
 
 void le_comandos(){
     int fd;
@@ -203,11 +223,12 @@ void le_comandos(){
     }
     else{
         read(fd,comando,1000);
-        if (validacao(comando,header_voos)==true)
+        if (validacao(comando)==true)
             printf("pipe lido com sucesso\n");
-	else
-		printf("erro ao ler o pipe\n");
+        else
+            printf("erro ao ler o pipe\n");
     }
+    print_voos(header_voos);
 }
 
 void cria_pipe(){
@@ -218,8 +239,8 @@ void cria_pipe(){
 }
 
 void* thread_leitura(void* idp){
-    while(1){	
-    le_comandos();
+    while(1){
+        le_comandos();
     }
 
     pthread_exit(NULL);
@@ -231,26 +252,26 @@ int inicia(){
     pid_t processo;
     pthread_t pipe_thread;
     int pipe_thread_id;
-    struct flight* header_voos=cria_header_voos;
+    header_voos=cria_header_voos();
     read_config();
     //print_struct();
-    
-    
+
+
     //PIPE
     cria_pipe();
     //para escrever no pipe abrir outro terminal e escrever echo "cena">input_pipe
-    
+
     //THREAD que lê o pipe
     pthread_create(&pipe_thread,NULL,thread_leitura,&pipe_thread_id);
-    
-    
+
+
     //MQ
     if ((message_queue = msgget(IPC_PRIVATE, IPC_CREAT | 0700))==-1){
         printf("Erro ao criar a message queue!\n");
         return -1;
     }//else printf("Message queue criada!\n");
 
-    processo=fork();
+    //processo=fork();
     /*
     if(processo==0){
         printf("PID da torre de controlo: %d\n",getpid());
@@ -269,7 +290,7 @@ void ficheiro_log(char* mensagem){
     FILE *f=fopen("log.txt","a");
     time_t horas;
     struct tm* time_struct;
-    
+
     time(&horas);
     time_struct = localtime(&horas);
     fprintf(f,"%d:%d:%d %s\n",time_struct->tm_hour,time_struct->tm_min,time_struct->tm_sec,mensagem);
