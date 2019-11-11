@@ -19,16 +19,6 @@
 #include <sys/msg.h>
 #define PIPE_NAME "/tmp/input_pipe"
 
-//variaveis globais
-int unidade;
-int duracao_descolagem;
-int duracao_aterragem;
-int int_descolagem;
-int int_aterragem;
-int hold_max;
-int hold_min;
-int qtd_max_partidas;
-int qtd_max_chegadas;
 
 //structs
 struct flight{
@@ -42,6 +32,19 @@ struct flight{
     struct voo * next;
 };
 
+//variaveis globais
+int unidade;
+int duracao_descolagem;
+int duracao_aterragem;
+int int_descolagem;
+int int_aterragem;
+int hold_max;
+int hold_min;
+int qtd_max_partidas;
+int qtd_max_chegadas;
+struct flight* header_voos;
+
+//funçoes de print
 void print_struct(){
     printf("ua: %d\n",unidade);
     printf("dd: %d, id: %d\n",duracao_descolagem,int_descolagem);
@@ -51,21 +54,67 @@ void print_struct(){
     printf("qtdc: %d\n",qtd_max_chegadas);
 }
 
+void print_voos(struct flight* header){
+    struct flight* atual= header->next;
+    while(atual->next != NULL){
+        if(atual->type=0){
+            printf("DEPARTURE %s init:%d takeoff:%d",atual->code,atual->init,atual->takeoff);
+        }
+        else{
+            printf("ARRIVAL %s init:%d eta:%d fuel:%d",atual->code,atual->init,atual->eta,atual->fuel);
+        }
+        atual=atual->next;
+    }
+}
+
+struct flight* cria_header_voos(){
+    struct flight* header;
+    header=malloc(sizeof(struct flight));
+    if(header != NULL){
+        strcpy(header->code,"\0");
+        header->eta=NULL;
+        header->fuel=NULL;
+        header->holding=NULL;
+        header->init=NULL;
+        header->takeoff=NULL;
+        header->type=NULL;
+        header->next=NULL;
+    }
+
+}
+
+void add_voo(struct flight* header,struct flight* node){
+    node->next=header->next;
+    header->next=node;
+}
+
+
 void read_config(){
     FILE*f=fopen("config.txt","r");
     fscanf(f,"%d\n%d, %d\n%d, %d\n%d, %d\n%d\n%d",&unidade,&duracao_descolagem,&int_descolagem,&duracao_aterragem,&int_aterragem,&hold_min,&hold_max,&qtd_max_partidas,&qtd_max_chegadas);
 }
 
-bool verifica_numero(char* str, int fim){
+bool verifica_numero(char* str, int fim, int flag){
     int i;
-    for(i=0;i<fim;i++){
-        if(isdigit(str[i])==0)
-            return false;
+    if(flag==0){
+	    for(i=0;i<fim;i++){
+		if(isdigit(str[i])==0)
+		    return false;
+	    }
     }
+    /* Preciso resolver
+    else{
+    	str[strlen(str)-1]='\t';
+    	for(i=0;i<fim;i++){
+    	printf("boas : %s/",str[i]);
+		if(isdigit(str[i])==0)
+		    return false;
+    	}
+    }*/
     return true;
-}
+}	
 
-bool validacao(char * mensagem){
+bool validacao(char * mensagem, struct flight* header_voos){
     struct flight* voo=malloc(sizeof(struct flight));
     char* token;
     char* dem="\t";
@@ -77,11 +126,11 @@ bool validacao(char * mensagem){
     token=strtok(mensagem,dem);
     if (strcmp(token,"ARRIVAL")==0){
         voo->type=2;
-        printf("[%d] Arrival\n",voo->type);
+        //printf("[%d] Arrival\n",voo->type);
     }
     else if(strcmp(token,"DEPARTURE")==0){
         voo->type=1;
-        printf("[%d] Departure\n",voo->type);
+        //printf("[%d] Departure\n",voo->type);
     }
     else return false;
 
@@ -89,19 +138,19 @@ bool validacao(char * mensagem){
         token=strtok(NULL,dem);
         //printf("token [%d]: %s\n",i,token);
         if (i==1){ //flight_code
-            if (strncmp("TP",token,2)!=0 || verifica_numero(token+2,strlen(token+2))==false)
+            if (strncmp("TP",token,2)!=0 || verifica_numero(token+2,strlen(token+2),0)==false)
                 return false;
             else{
                 strcpy(voo->code,token);
-                printf("%s\n",voo->code);
+                //printf("%s\n",voo->code);
             }
         }
         else if(i==2){
             if(strcmp(token,"init:")!=0) return false;
         }
-        else if(i==3 && verifica_numero(token,strlen(token))==true){
+        else if(i==3 && verifica_numero(token,strlen(token),0)==true){
             voo->init=atoi(token);
-            printf("init:%d\n",voo->init);
+            //printf("init:%d\n",voo->init);
         }
         else if(i==4){
             if(strcmp("takeoff:",token)!=0 && strcmp("eta:",token)!=0) return false;
@@ -110,16 +159,19 @@ bool validacao(char * mensagem){
             if(strcmp("fuel:",token)!=0) return false;
         }
         else if(i==5 || i==7){
-		if(verifica_numero(token,strlen(token))==false){
-			printf("token: %s. len: %d\n",token,(int)strlen(token));
+        
+        	/* Ainda não funciona para este último caso
+			if(verifica_numero(token,strlen(token),1)==false){
+				printf("token: %s%d\n",token,(int)strlen(token));
 		        printf("fodeu\n");
-		        return false;
-		    }
+		   	    return false;
+		    }*/
+		    
             if(voo->type==1){
                 voo->eta=0;
                 voo->fuel=0;
                 voo->takeoff=atoi(token);
-                printf("takeoff:%d\n",voo->takeoff);
+                //printf("takeoff:%d\n",voo->takeoff);
                 return true;
                 
             }
@@ -127,18 +179,19 @@ bool validacao(char * mensagem){
                 voo->init=0;
                 if(i==5){
                     voo->eta=atoi(token);
-                    printf("eta:%d\n",voo->eta);
+                    //printf("eta:%d\n",voo->eta);
                 }
                 else{
                     voo->fuel = atoi(token);
-                    printf("fuel:%d\n", voo->fuel);
+                    //printf("fuel:%d\n", voo->fuel);
                     return true;
                 }
             }
         }
         i++;
     }
-    return true;
+    add_voo(header_voos,voo);
+    return false;
 }
 
 void le_comandos(){
@@ -150,7 +203,7 @@ void le_comandos(){
     }
     else{
         read(fd,comando,1000);
-        if (validacao(comando)==true)
+        if (validacao(comando,header_voos)==true)
             printf("pipe lido com sucesso\n");
 	else
 		printf("erro ao ler o pipe\n");
@@ -178,6 +231,7 @@ int inicia(){
     pid_t processo;
     pthread_t pipe_thread;
     int pipe_thread_id;
+    struct flight* header_voos=cria_header_voos;
     read_config();
     //print_struct();
     
