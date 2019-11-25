@@ -65,13 +65,14 @@ int qtd_max_partidas;
 int qtd_max_chegadas;
 int shmid;
 int j;
-int time_init;
+time_t time_init;
 pthread_t thread_voos[MAX_THREADS];
 int ids[MAX_THREADS];
 struct arrival* header_arrivals;
 struct departure* header_departures;
 pthread_mutex_t mutex;
 pthread_mutex_t mutex2;
+FILE * f_log;
 
 
 void print_struct(){
@@ -103,22 +104,103 @@ void print_departures(struct departure* header){
 
 
 void add_departure(struct departure* header,struct departure* node){
-    node->next=header->next;
-    header->next=node;
+    struct departure* atual = header_departures;
+    while(atual->next !=NULL && atual->next->init < node->init){
+            atual=atual->next;
+    }
+    if(atual->next==NULL){
+        atual->next=node;
+    }
+    else{
+        node->next=atual->next;
+        atual->next=node;
+    }
+
     printf("added departure\n");
 }
 
 void add_arrival(struct arrival* header, struct arrival* node){
-	node->next=header->next;
-    header->next=node;
+    struct arrival* atual = header_arrivals;
+    while(atual->next !=NULL && atual->next->init < node->init){
+            atual=atual->next;
+    }
+    if(atual->next==NULL){
+        atual->next=node;
+    }
+    else{
+        node->next=atual->next;
+        atual->next=node;
+    }
     printf("added arrival\n");
 }
 
 void ficheiro_log(char* mensagem);
 
 void read_config(){
-    FILE*f=fopen("config.txt","r");//adicionar segurança, poder assumir valr por omição
-    fscanf(f,"%d\n%d, %d\n%d, %d\n%d, %d\n%d\n%d",&unidade,&duracao_descolagem,&int_descolagem,&duracao_aterragem,&int_aterragem,&hold_min,&hold_max,&qtd_max_partidas,&qtd_max_chegadas);
+    FILE* configs=fopen("config.txt","r");
+    char linha[30];
+    char* token;
+    int i=0;
+
+    //falta meter proteção para se a linha das virgulas estiver
+    //vazia, mas ainda não sei como fazer
+
+    if(configs==NULL){
+        perror("Erro a ler o ficheiro config.txt");
+    }
+
+    while(fgets(linha,30,configs)){
+        if(i==0){ 
+            unidade=atoi(linha);
+            if (unidade==0)
+                unidade=500;
+        }
+
+        else if(i==1){
+            token=strtok(linha,",");
+            duracao_descolagem=atoi(token);
+            if (duracao_descolagem==0)
+                duracao_descolagem=30;
+            token=strtok(NULL,",");
+            int_descolagem=atoi(token);
+            if (int_descolagem==0)
+                int_descolagem=5;
+        }
+
+        else if(i==2){
+            token=strtok(linha,",");
+            duracao_aterragem=atoi(token);
+            if (duracao_aterragem==0)
+                duracao_aterragem=20;
+            token=strtok(NULL,",");
+            int_aterragem=atoi(token);
+            if (int_aterragem==0)
+                int_aterragem=10;
+        }
+
+        else if(i==3){
+            token=strtok(linha,",");
+            hold_min=atoi(token);
+            if (hold_min==0)
+                hold_min=75;
+            token=strtok(NULL,",");
+            hold_max=atoi(token);
+            if (hold_max==0)
+                hold_max=100;
+        }
+
+        else if(i==4){
+            qtd_max_partidas=atoi(linha);
+            if (qtd_max_partidas==0)
+                qtd_max_partidas=100;
+        }
+        else if(i==5){
+            qtd_max_chegadas=atoi(linha);
+            if (qtd_max_chegadas==0)
+                qtd_max_chegadas=1000;
+        }
+        i++;
+    }
 }
 
 
@@ -172,11 +254,13 @@ bool validacao(char * mensagem){
     token=strtok(mensagem,dem);
     if (strcmp(token,"ARRIVAL")==0){
         arr=malloc(sizeof(struct arrival));
+        arr->next=NULL;
         type=2;
         //printf("[%d] Arrival\n",voo->type);
     }
     else if(strcmp(token,"DEPARTURE")==0){
         dep=malloc(sizeof(struct departure));
+        dep->next=NULL;
         type=1;
         //printf("[%d] Departure\n",voo->type);
     }
@@ -185,8 +269,10 @@ bool validacao(char * mensagem){
     while(token !=NULL){
         token=strtok(NULL,dem);
         //printf("token [%d]: %s\n",i,token);
-        if(token == NULL)
-        	break;
+        if(token == NULL){
+            printf("FODA-SE\n");
+            break;
+        }
         if (i==1){ //flight_code
         	  if(verifica_code(token)== false) return false;
         	  else{
@@ -202,8 +288,8 @@ bool validacao(char * mensagem){
             if(strcmp(token,"init:")!=0) return false;
         }
         else if(i==3 && verifica_numero(token,strlen(token),0)==true){
-
-            if(atoi(token) < (time(NULL)-time_init)){
+       
+            if(atoi(token) < (int)(time(NULL)-time_init)){
                return false;
             }
         	if(type==1){
@@ -228,7 +314,6 @@ bool validacao(char * mensagem){
             	if(verifica_numero(token,strlen(token),0)==false) return false;
                 dep->takeoff=atoi(token);
                 add_departure(header_departures,dep);
-                cria_threads_voo(dep->init);
                 return true;
 
             }
@@ -241,7 +326,6 @@ bool validacao(char * mensagem){
                 	if(verifica_numero(token,strlen(token),0)==false) return false;
                     arr->fuel = atoi(token);
                     add_arrival(header_arrivals,arr);
-                    cria_threads_voo(arr->init);
                     return true;
                 }
             }
@@ -261,7 +345,7 @@ void le_comandos(){
     }
     else{
 	memset(comando,0,1000);
-
+	
         read(fd,comando,1000);
         strcpy(cmd,comando);
         if (validacao(comando)==true){
@@ -272,9 +356,9 @@ void le_comandos(){
         	sprintf(str,"WRONG COMMAND => %s\n",cmd);
             ficheiro_log(str);
         }
-
+       
     }
-
+    
 }
 
 //função de operação das threads
@@ -299,6 +383,68 @@ void* thread_leitura(void* idp){
         pthread_mutex_unlock(&mutex2);
     }
 
+    pthread_exit(NULL);
+    return NULL;
+}
+
+void* thread_controlo(void* idp){
+    int num;
+    while(1){
+        scanf("%d",&num);
+        if(num==1){
+            int tempo_atual = (int)(time(NULL)-time_init);
+            printf("tempo_atual: %d\n",tempo_atual);
+        }
+        else if(num==2){
+            print_arrivals(header_arrivals);
+            print_departures(header_departures);
+
+        }
+        else if(num==3){
+            printf("n. threads = %d\n",j);
+        }
+    }
+    pthread_exit(NULL);
+    return NULL;
+}
+
+void* thread_cria_voos(void* idp){
+    struct arrival* atual_arrival=header_arrivals;
+    struct departure* atual_departure=header_departures;
+    while(1){
+        int tempo_atual = (int)(time(NULL)-time_init);
+        if (atual_arrival->next!=NULL){
+            int tempo_prox_arr =atual_arrival->next->init;
+            if (tempo_atual == atual_arrival->next->init){
+                printf("init_arr: %d\n", atual_arrival->next->init);
+                cria_threads_voo();
+                if (atual_arrival->next->next!=NULL){
+                    atual_arrival=atual_arrival->next;
+                    printf("tempo espera: %d\n",atual_arrival->next->init - tempo_atual);
+                    sleep(tempo_prox_arr - tempo_atual);
+                }
+                else{
+                    sleep(1);
+                }
+            }
+        }
+        if (atual_departure->next != NULL){
+            int tempo_prox_dep = atual_departure->next->init;
+            if (tempo_atual == atual_departure->next->init){
+                printf("init_dep: %d\n", atual_departure->next->init);
+                cria_threads_voo();
+                if (atual_departure->next->next!=NULL){
+                    atual_departure=atual_departure->next;
+                    printf("tempo espera: %d\n",atual_departure->next->init - tempo_atual);
+                    sleep(tempo_prox_dep - tempo_atual);
+                }
+                else{
+                    sleep(1);
+                }
+            }
+        }
+
+    }
     pthread_exit(NULL);
     return NULL;
 }
@@ -337,10 +483,8 @@ void sigint(int signum){
 }
 
 
-void cria_threads_voo(int init){//mudificar
+void cria_threads_voo(){
   ids[j] = j;
-  time_t tempo_atual=(time(NULL)-time_init)*1000;
-  usleep(init*unidade*1000-tempo_atual);
   if((pthread_create(&thread_voos[j], NULL, gere_voos, &ids[j])) != 0){
     printf("ERRO a criar thread\n");
   }
@@ -353,7 +497,11 @@ int inicia(){
     pid_t processo;
     j=0;
     pthread_t pipe_thread;
+    pthread_t time_thread;
+    pthread_t tempo_atual_thread;
     int pipe_thread_id;
+    int time_thread_id;
+    int tempo_atual_thread_id;
     char str[1000];
     signal(SIGINT, sigint);
     time_init = time(NULL);
@@ -362,6 +510,9 @@ int inicia(){
     header_arrivals->next=NULL;
     header_departures=malloc(sizeof(struct departure));
     header_departures->next=NULL;
+    f_log=fopen("log.txt","a");
+
+    printf("\n\n>>PARA VER TEMPO ATUAL INSERIR: \"1\"<<\n\n");
 
     read_config();
     //print_struct();
@@ -375,6 +526,12 @@ int inicia(){
 
     //THREAD que lê o pipe
     pthread_create(&pipe_thread,NULL,thread_leitura,&pipe_thread_id);
+
+    //THREAD que crias as outras threads
+    pthread_create(&time_thread,NULL,thread_cria_voos,&time_thread_id);
+
+    //THREAD para mostrar o tempo atual ya dps apaga-se
+    pthread_create(&tempo_atual_thread,NULL,thread_controlo,&tempo_atual_thread_id);
 
     //Inicia mutex
     if (pthread_mutex_init(&mutex, NULL) != 0){
@@ -407,21 +564,20 @@ int inicia(){
 
 void ficheiro_log(char* mensagem){//manter o ficheiro aberto, e mecanismo de sincronismo
     pthread_mutex_lock(&mutex);
-    FILE *f=fopen("log.txt","a");
     time_t horas;
     struct tm* time_struct;
     mensagem[strlen(mensagem)-1]='\0';
     time(&horas);
     time_struct = localtime(&horas);
-    fprintf(f,"%d:%d:%d %s",time_struct->tm_hour,time_struct->tm_min,time_struct->tm_sec,mensagem);
+    fprintf(f_log,"%d:%d:%d %s",time_struct->tm_hour,time_struct->tm_min,time_struct->tm_sec,mensagem);
     printf("%d:%d:%d %s\n",time_struct->tm_hour,time_struct->tm_min,time_struct->tm_sec,mensagem);
-    fclose(f);
     pthread_mutex_unlock(&mutex);
 }
 
 
 int main() {
     inicia();
+    fclose(f_log);
     wait(NULL);
     return 0;
 }
