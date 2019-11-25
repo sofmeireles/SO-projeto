@@ -270,7 +270,6 @@ bool validacao(char * mensagem){
         token=strtok(NULL,dem);
         //printf("token [%d]: %s\n",i,token);
         if(token == NULL){
-            printf("FODA-SE\n");
             break;
         }
         if (i==1){ //flight_code
