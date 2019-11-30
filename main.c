@@ -1,3 +1,5 @@
+//run with gcc -pthread -D_REENTRANT -Wall main.c -o main
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/ipc.h>
@@ -73,6 +75,10 @@ struct departure* header_departures;
 pthread_mutex_t mutex;
 pthread_mutex_t mutex2;
 FILE * f_log;
+pthread_t pipe_thread;
+pthread_t time_thread;
+pthread_t tempo_atual_thread;
+int message_queue;
 
 
 void print_struct(){
@@ -150,7 +156,7 @@ void read_config(){
     }
 
     while(fgets(linha,30,configs)){
-        if(i==0){ 
+        if(i==0){
             unidade=atoi(linha);
             if (unidade==0)
                 unidade=500;
@@ -239,8 +245,6 @@ bool verifica_code(char* token){
     return true;
 }
 
-void cria_threads_voo();
-
 bool validacao(char * mensagem){
     struct arrival* arr;
     struct departure* dep;
@@ -288,7 +292,7 @@ bool validacao(char * mensagem){
             if(strcmp(token,"init:")!=0) return false;
         }
         else if(i==3 && verifica_numero(token,strlen(token),0)==true){
-       
+
             if(atoi(token) < (int)(time(NULL)-time_init)){
                return false;
             }
@@ -345,7 +349,7 @@ void le_comandos(){
     }
     else{
 	memset(comando,0,1000);
-	
+
         read(fd,comando,1000);
         strcpy(cmd,comando);
         if (validacao(comando)==true){
@@ -356,13 +360,13 @@ void le_comandos(){
         	sprintf(str,"WRONG COMMAND => %s\n",cmd);
             ficheiro_log(str);
         }
-       
+
     }
-    
+
 }
 
 //função de operação das threads
-void *gere_voos(){
+void *gere_voos(void* idp){
     printf("criou um voo\n");
     pthread_exit(NULL);
 }
@@ -375,6 +379,16 @@ void cria_pipe(){
 }
 
 void ve_inits();
+
+
+void cria_threads_voo(){
+  ids[j] = j;
+  if((pthread_create(&thread_voos[j], NULL, gere_voos,(void*) &ids[j])) != 0){
+    printf("ERRO a criar thread\n");
+  }
+  printf("criou a thread[%d]\n", ids[j]);
+  j++;
+}
 
 void* thread_leitura(void* idp){
     while(1){
@@ -482,23 +496,17 @@ void sigint(int signum){
     exit(0);
 }
 
-
-void cria_threads_voo(){
-  ids[j] = j;
-  if((pthread_create(&thread_voos[j], NULL, gere_voos, &ids[j])) != 0){
-    printf("ERRO a criar thread\n");
-  }
-  printf("criou a thread[%d]\n", ids[j]);
-  j++;
+void cria_mensage_queue(){
+  if ((message_queue = msgget(IPC_PRIVATE, IPC_CREAT | 0700))==-1){
+      printf("Erro ao criar a message queue!\n");
+      return -1;
+  }else printf("Message queue criada!\n");
 }
 
 int inicia(){
-    int message_queue;
     pid_t processo;
-    j=0;
-    pthread_t pipe_thread;
-    pthread_t time_thread;
-    pthread_t tempo_atual_thread;
+    //j=0;
+
     int pipe_thread_id;
     int time_thread_id;
     int tempo_atual_thread_id;
@@ -525,13 +533,13 @@ int inicia(){
     //para escrever no pipe abrir outro terminal e escrever echo "cena">input_pipe
 
     //THREAD que lê o pipe
-    pthread_create(&pipe_thread,NULL,thread_leitura,&pipe_thread_id);
+    pthread_create(&pipe_thread,NULL,thread_leitura,(void*)&pipe_thread_id);
 
     //THREAD que crias as outras threads
-    pthread_create(&time_thread,NULL,thread_cria_voos,&time_thread_id);
+    pthread_create(&time_thread,NULL,thread_cria_voos,(void*)&time_thread_id);
 
     //THREAD para mostrar o tempo atual ya dps apaga-se
-    pthread_create(&tempo_atual_thread,NULL,thread_controlo,&tempo_atual_thread_id);
+    pthread_create(&tempo_atual_thread,NULL,thread_controlo,(void*)&tempo_atual_thread_id);
 
     //Inicia mutex
     if (pthread_mutex_init(&mutex, NULL) != 0){
@@ -540,10 +548,7 @@ int inicia(){
     }
 
     //MQ
-    if ((message_queue = msgget(IPC_PRIVATE, IPC_CREAT | 0700))==-1){
-        printf("Erro ao criar a message queue!\n");
-        return -1;
-    }else printf("Message queue criada!\n");
+    cria_mensage_queue();
 
     processo=fork();
 
@@ -581,3 +586,4 @@ int main() {
     wait(NULL);
     return 0;
 }
+
