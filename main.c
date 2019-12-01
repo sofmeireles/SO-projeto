@@ -1,4 +1,4 @@
-//run with gcc -pthread -D_REENTRANT -Wall main.c -o main
+//run with gcc -pthread -D_REENTRANT -Wall main2.c -o main2
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -54,6 +54,13 @@ typedef struct{
   int voos_rejeitados;
 }mem_structure;
 mem_structure *data;
+
+typedef struct{
+  long mtype;
+  int takeoff;
+  int eta;
+  int fuel;
+}voos_send_msg;
 
 //variaveis globais
 int unidade;
@@ -368,6 +375,7 @@ void le_comandos(){
 //função de operação das threads
 void *gere_voos(void* idp){
     printf("criou um voo\n");
+
     pthread_exit(NULL);
 }
 
@@ -425,6 +433,7 @@ void* thread_controlo(void* idp){
 void* thread_cria_voos(void* idp){
     struct arrival* atual_arrival=header_arrivals;
     struct departure* atual_departure=header_departures;
+    voos_send_msg msg;
     while(1){
         int tempo_atual = (int)(time(NULL)-time_init);
         if (atual_arrival->next!=NULL){
@@ -432,6 +441,15 @@ void* thread_cria_voos(void* idp){
             if (tempo_atual == atual_arrival->next->init){
                 printf("init_arr: %d\n", atual_arrival->next->init);
                 cria_threads_voo();
+                //MQ
+                msg.eta = atual_arrival->next->eta;
+                msg.fuel  = atual_arrival->next->fuel;
+                msg.mtype = 1;
+                printf("sending(%d and %d)\n", msg.eta, msg.fuel);
+                if( (msgsnd(message_queue, &msg, sizeof(msg)-sizeof(long), 0)) == -1){
+                  printf("erro a enviar a mensagem\n");
+                  perror(0);
+                }
                 if (atual_arrival->next->next!=NULL){
                     atual_arrival=atual_arrival->next;
                     printf("tempo espera: %d\n",atual_arrival->next->init - tempo_atual);
@@ -447,6 +465,14 @@ void* thread_cria_voos(void* idp){
             if (tempo_atual == atual_departure->next->init){
                 printf("init_dep: %d\n", atual_departure->next->init);
                 cria_threads_voo();
+                //MQ
+                msg.takeoff = atual_departure->next->takeoff;
+                msg.mtype = 2;
+                printf("sending(%d)\n", msg.takeoff);
+                if( (msgsnd(message_queue, &msg, sizeof(msg)-sizeof(long), 0)) == -1){
+                  printf("erro a enviar a mensagem\n");
+                  perror(0);
+                }
                 if (atual_departure->next->next!=NULL){
                     atual_departure=atual_departure->next;
                     printf("tempo espera: %d\n",atual_departure->next->init - tempo_atual);
@@ -499,12 +525,32 @@ void sigint(int signum){
 void cria_mensage_queue(){
   if ((message_queue = msgget(IPC_PRIVATE, IPC_CREAT | 0700))==-1){
       printf("Erro ao criar a message queue!\n");
-      return -1;
+      exit(0);
   }else printf("Message queue criada!\n");
 }
 
+void torre(){
+    voos_send_msg msg;
+    while(1){
+      //Ler os departure
+      if(msgrcv(message_queue, &msg, sizeof(msg)-sizeof(long), 2, 0) == -1){
+        printf("erro a ler a mesage queue");
+        perror(0);
+      }
+      printf("lido da MQ2(%d)\n", msg.takeoff);
+      //ler os arrivel
+      if(msgrcv(message_queue, &msg, sizeof(msg)-sizeof(long), 1, 0) == -1){
+        printf("erro a ler a mesage queue");
+        perror(0);
+      }
+      printf("lido da MQ1(%d, %d)\n", msg.eta, msg.fuel);
+
+    }
+}
+
+
 int inicia(){
-    pid_t processo;
+    pid_t torre_controlo;
     //j=0;
 
     int pipe_thread_id;
@@ -532,6 +578,19 @@ int inicia(){
     cria_pipe();
     //para escrever no pipe abrir outro terminal e escrever echo "cena">input_pipe
 
+    //MQ
+    cria_mensage_queue();
+
+    torre_controlo=fork();
+
+    if(torre_controlo==0){
+        printf("PID da torre de controlo: %d\n",getpid());
+        sprintf(str,"PID da torre de controlo: %d \n",getpid());
+        ficheiro_log(str);
+        //execl("torre","torre");
+        torre();
+    }
+
     //THREAD que lê o pipe
     pthread_create(&pipe_thread,NULL,thread_leitura,(void*)&pipe_thread_id);
 
@@ -545,18 +604,6 @@ int inicia(){
     if (pthread_mutex_init(&mutex, NULL) != 0){
         printf("Erro ao inicializar o mutex\n");
         return -1;
-    }
-
-    //MQ
-    cria_mensage_queue();
-
-    processo=fork();
-
-    if(processo==0){
-        printf("PID da torre de controlo: %d\n",getpid());
-        sprintf(str,"PID da torre de controlo: %d \n",getpid());
-        ficheiro_log(str);
-        //execl("torre","torre");
     }
 
     else{
@@ -586,4 +633,3 @@ int main() {
     wait(NULL);
     return 0;
 }
-
