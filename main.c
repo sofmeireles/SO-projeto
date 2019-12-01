@@ -79,6 +79,7 @@ struct departure* header_departures;
 struct voo* header_voos;
 pthread_mutex_t mutex;
 pthread_mutex_t mutex2;
+sem_t *mutexx;
 FILE * f_log;
 
 
@@ -180,7 +181,7 @@ void remove_voo(char* nome){
 }
 
 
-void add_departure(struct departure* header,struct departure* node){
+void add_departure(struct departure* node){
     struct departure* atual = header_departures;
     struct voo* novo_voo=malloc(sizeof(struct voo));
     while(atual->next !=NULL && atual->next->init < node->init){
@@ -200,9 +201,10 @@ void add_departure(struct departure* header,struct departure* node){
     printf("added departure\n");
 }
 
-void add_arrival(struct arrival* header, struct arrival* node){
+void add_arrival(struct arrival* node){
     struct arrival* atual = header_arrivals;
     struct voo* novo_voo=malloc(sizeof(struct voo));
+    sem_wait(mutexx);
     while(atual->next !=NULL && atual->next->init < node->init){
             atual=atual->next;
     }
@@ -217,6 +219,7 @@ void add_arrival(struct arrival* header, struct arrival* node){
     novo_voo->dep=NULL;
     novo_voo->next=NULL;
     add_voo(novo_voo);
+    sem_post(mutexx);
     printf("added arrival\n");
 }
 
@@ -445,7 +448,7 @@ bool validacao(char * mensagem){
             	token[strlen(token)-1]='\0';
             	if(verifica_numero(token,strlen(token),0)==false) return false;
                 dep->takeoff=atoi(token);
-                add_departure(header_departures,dep);
+                add_departure(dep);
                 return true;
 
             }
@@ -457,7 +460,7 @@ bool validacao(char * mensagem){
                 	token[strlen(token)-1]='\0';
                 	if(verifica_numero(token,strlen(token),0)==false) return false;
                     arr->fuel = atoi(token);
-                    add_arrival(header_arrivals,arr);
+                    add_arrival(arr);
                     return true;
                 }
             }
@@ -606,6 +609,7 @@ void cria_memoria(){
 }
 
 void sigint(int signum){
+    wait(NULL);
     printf("\n######### Departures #########\n");
     print_departures(header_departures);
     printf("######### ARRIVALS #########\n");
@@ -613,6 +617,10 @@ void sigint(int signum){
     //limpar memoria partilhada
     shmctl(shmid, IPC_RMID, NULL);
     printf("Limpou a memoria\n");
+
+    //limpar mutexx
+    sem_close(mutexx);
+    sem_unlink("MUTEXX");
 
     //limpar threads
     for(int i=0; i<(qtd_max_partidas+qtd_max_chegadas); i++){
@@ -632,21 +640,33 @@ void cria_threads_voo(){
 }
 
 void *thread_fuel(void* arg){
-    struct voo* atual;
+    struct arrival* atual;
     while(1){
-        atual=header_voos;
+        //printf("tou\n");
         int tempo_atual = (int)(time(NULL)-time_init);
-        //printf("foda-se\n");
-        while(atual->next != NULL){
-            if(atual->next->arr!=NULL){
-                if(atual->next->arr->init < tempo_atual){
-                    atual->next->arr->fuel--;
+        print_arrivals(header_arrivals);
+        if(header_arrivals->next==NULL)printf("foda-se\n");
+        if(header_arrivals->next != NULL){
+            atual=header_arrivals;
+            while(atual != NULL){
+                printf("tempo atual: %d  init: %d",tempo_atual,atual->next->init);
+                if(atual->next->next == NULL && atual->next->init <= tempo_atual){
+                    printf("ola\n");
+                    atual->next->fuel--;
+                    break;
                 }
+                if(atual->next->init <= tempo_atual){
+                    printf("OLA\n");
+                    atual->next->fuel--;
+                }
+                atual=atual->next;
             }
-            atual=atual->next;
-        }
+        } 
+        
         sleep(1);
     }
+    pthread_exit(NULL);
+    return NULL;
 }
 
 void torre_de_controlo(){
@@ -659,9 +679,8 @@ void torre_de_controlo(){
 
     //Thread que atualiza o combustível
     pthread_create(&fuel_thread,NULL,thread_fuel,&thread_fuel_id);
-
     
-
+    pthread_join(fuel_thread,NULL);
 }
 
 
@@ -686,12 +705,12 @@ int inicia(){
     header_voos->next=NULL;
     f_log=fopen("log.txt","a");
 
-    printf("\n\n>>PARA VER TEMPO ATUAL INSERIR: \"1\"<<\n\n");
+    sem_unlink("MUTEXX");
+    mutexx=sem_open("MUTEXX",O_CREAT|O_EXCL,0700,1);
 
     processo=fork();
 
     if(processo==0){
-
         torre_de_controlo();
     }
 
@@ -707,7 +726,6 @@ int inicia(){
 
     //PIPE
     cria_pipe();
-    //para escrever no pipe abrir outro terminal e escrever echo "cena">input_pipe
 
     //THREAD que lê o pipe
     pthread_create(&pipe_thread,NULL,thread_leitura,&pipe_thread_id);
@@ -749,6 +767,7 @@ void ficheiro_log(char* mensagem){//manter o ficheiro aberto, e mecanismo de sin
 
 
 int main() {
+    
     inicia();
     fclose(f_log);
     wait(NULL);
