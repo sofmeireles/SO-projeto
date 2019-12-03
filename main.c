@@ -698,9 +698,7 @@ void *thread_fuel(void* arg){
         for(i=0;i<MAX_ARRIVALS;i++){
             if((shm_arrivals+i)->init != -1){
                 if((shm_arrivals+i)->fuel==0){
-                        //sem_wait(mutexx);
                         redireciona((shm_arrivals+i)->code,i);
-                        //sem_post(mutexx);
                 }
 
                 //printf("INIT:  %d\n",(shm_arrivals+i)->init);
