@@ -21,6 +21,7 @@
 #include <time.h>
 #define PIPE_NAME "/tmp/input_pipe"
 #define MAX_THREADS 5000
+#define MAX_ARRIVALS 10
 
 //structs
 struct departure{
@@ -28,6 +29,7 @@ struct departure{
     int init;
     int takeoff;
     int holding;
+    int slot_shm;
     struct departure * next;
 };
 
@@ -37,6 +39,7 @@ struct arrival{
     int eta;
     int fuel;
     int holding;
+    struct arrival* slot_shm;
     struct arrival * next;
 };
 
@@ -56,6 +59,7 @@ typedef struct{
   int m_mh_hurg;
   int num_voos_red;
   int voos_rejeitados;
+  
 }mem_structure;
 mem_structure *data;
 
@@ -70,6 +74,7 @@ int hold_min;
 int qtd_max_partidas;
 int qtd_max_chegadas;
 int shmid;
+int shmid2;
 int j;
 time_t time_init;
 pthread_t thread_voos[MAX_THREADS];
@@ -77,6 +82,7 @@ int ids[MAX_THREADS];
 struct arrival* header_arrivals;
 struct departure* header_departures;
 struct voo* header_voos;
+struct arrival* shm_arrivals;
 pthread_mutex_t mutex;
 pthread_mutex_t mutex2;
 sem_t *mutexx;
@@ -553,12 +559,26 @@ void* thread_controlo(void* idp){
 void* thread_cria_voos(void* idp){
     struct arrival* atual_arrival=header_arrivals;
     struct departure* atual_departure=header_departures;
+    int i;
     while(1){
         int tempo_atual = (int)(time(NULL)-time_init);
         if (atual_arrival->next!=NULL){
             int tempo_prox_arr =atual_arrival->next->init;
             if (tempo_atual == atual_arrival->next->init){
                 printf("init_arr: %d\n", atual_arrival->next->init);
+                for(i=0;i<MAX_ARRIVALS;i++){
+                    if((shm_arrivals+i)->init == -1){
+                        printf("ola\n");
+                        atual_arrival->next->slot_shm=shm_arrivals+i;
+                        (shm_arrivals+i)->init=atual_arrival->next->init;
+                        (shm_arrivals+i)->fuel=atual_arrival->next->fuel;
+                        strcpy((shm_arrivals+i)->code,atual_arrival->next->code);
+                        break;
+                    }
+                    else{
+                        i++;
+                    }
+                }
                 cria_threads_voo();
                 if (atual_arrival->next->next!=NULL){
                     atual_arrival=atual_arrival->next;
@@ -592,20 +612,39 @@ void* thread_cria_voos(void* idp){
 }
 
 void cria_memoria(){
-  shmid = shmget(IPC_PRIVATE, sizeof(mem_structure), IPC_CREAT | 0766);
-  if(shmid < 0){
+    shmid = shmget(IPC_PRIVATE, sizeof(mem_structure), IPC_CREAT | 0766);
+    if(shmid < 0){
         printf("ERRO na criacao da memoria\n");
         exit(-1);
-        }
+    }
 
-        data = (mem_structure*)shmat(shmid, NULL, 0);
-        if(data == (mem_structure*)-1){
-            printf("ERRO no mapeamento da memoria\n");
-            exit(-1);
-        }
-        else{
-            printf("Memoria mapeada\n");
-        }
+    data = (mem_structure*)shmat(shmid, NULL, 0);
+    if(data == (mem_structure*)-1){
+        printf("ERRO no mapeamento da memoria\n");
+        exit(-1);
+    }
+    else{
+        printf("Memoria mapeada\n");
+    }
+
+    shmid2 = shmget(IPC_PRIVATE, sizeof(struct arrival)*MAX_ARRIVALS, IPC_CREAT | 0766);
+    if(shmid2 < 0){
+        printf("ERRO na criacao da memoria\n");
+        exit(-1);
+    }
+
+    shm_arrivals = (struct arrivals*)shmat(shmid, NULL, 0);
+    if(shm_arrivals == NULL){
+        printf("ERRO no mapeamento da memoria\n");
+        exit(-1);
+    }
+    else{
+        printf("Memoria mapeada\n");
+    }
+
+    for(int i=0;i<MAX_ARRIVALS;i++){
+        (shm_arrivals+i)->init=-1; //inicializar o init a -1 para conseguir incrementar o fuel
+    }
 }
 
 void sigint(int signum){
@@ -616,6 +655,7 @@ void sigint(int signum){
     print_arrivals(header_arrivals);
     //limpar memoria partilhada
     shmctl(shmid, IPC_RMID, NULL);
+    shmctl(shmid2, IPC_RMID, NULL);
     printf("Limpou a memoria\n");
 
     //limpar mutexx
@@ -639,34 +679,32 @@ void cria_threads_voo(){
 
 }
 
+void redireciona(char* code,int i){
+    char str[1000];
+    sprintf(str,"%s LEAVING TO OTHER AIRPORT => FUEL = 0\n",code);
+    ficheiro_log(str);
+    (shm_arrivals+i)->init=-1; //libertar o espaço da shm
+
+}
+
 void *thread_fuel(void* arg){
-    struct arrival* atual;
+    int i;
     while(1){
-        //printf("tou\n");
-        int tempo_atual = (int)(time(NULL)-time_init);
-        print_arrivals(header_arrivals);
-        if(header_arrivals->next==NULL)printf("foda-se\n");
-        if(header_arrivals->next != NULL){
-            atual=header_arrivals;
-            while(atual != NULL){
-                printf("tempo atual: %d  init: %d",tempo_atual,atual->next->init);
-                if(atual->next->next == NULL && atual->next->init <= tempo_atual){
-                    printf("ola\n");
-                    atual->next->fuel--;
-                    break;
+        for(i=0;i<MAX_ARRIVALS;i++){
+            if((shm_arrivals+i)->init != -1){
+                sem_wait(mutexx);
+                printf("INIT:  %d\n",(shm_arrivals+i)->init);
+                (shm_arrivals+i)->fuel--;
+                printf("fuel[%d]: %d\n",i,(shm_arrivals+i)->fuel);
+                sem_post(mutexx);
+
+                if((shm_arrivals+i)->fuel==0){
+                    redireciona((shm_arrivals+i)->code,i);
                 }
-                if(atual->next->init <= tempo_atual){
-                    printf("OLA\n");
-                    atual->next->fuel--;
-                }
-                atual=atual->next;
             }
-        } 
-        
+        }
         sleep(1);
     }
-    pthread_exit(NULL);
-    return NULL;
 }
 
 void torre_de_controlo(){
@@ -682,6 +720,8 @@ void torre_de_controlo(){
     
     pthread_join(fuel_thread,NULL);
 }
+
+
 
 
 int inicia(){
@@ -708,6 +748,10 @@ int inicia(){
     sem_unlink("MUTEXX");
     mutexx=sem_open("MUTEXX",O_CREAT|O_EXCL,0700,1);
 
+    //cira a memoria partilhada
+    cria_memoria();
+
+
     processo=fork();
 
     if(processo==0){
@@ -721,8 +765,6 @@ int inicia(){
     read_config();
     //print_struct();
 
-    //cira a memoria partilhada
-    cria_memoria();
 
     //PIPE
     cria_pipe();
@@ -732,6 +774,9 @@ int inicia(){
 
     //THREAD que crias as outras threads
     pthread_create(&time_thread,NULL,thread_cria_voos,&time_thread_id);
+
+    //THREAD que mandas as listas para a shared memory
+    
 
     //THREAD para mostrar o tempo atual ya dps apaga-se
     pthread_create(&tempo_atual_thread,NULL,thread_controlo,&tempo_atual_thread_id);
