@@ -85,7 +85,9 @@ struct voo* header_voos;
 struct arrival* shm_arrivals;
 pthread_mutex_t mutex;
 pthread_mutex_t mutex2;
+pthread_mutex_t mutex_fuel;
 sem_t *mutexx;
+sem_t *mutexlog;
 FILE * f_log;
 
 
@@ -102,7 +104,7 @@ void print_arrivals(struct arrival* header){
     struct arrival* atual= header;
     if(atual->next == NULL) printf("lista vazia\n");
     while(atual->next != NULL){
-        printf("ARRIVAL %s init:%d eta:%d fuel:%d\n",atual->next->code,atual->next->init,atual->next->eta,atual->next->fuel);
+        printf("ARRIVAL %s init:%d eta:%d fuel_inicial:%d\n",atual->next->code,atual->next->init,atual->next->eta,atual->next->fuel);
         atual=atual->next;
     }
 }
@@ -661,6 +663,8 @@ void sigint(int signum){
     //limpar mutexx
     sem_close(mutexx);
     sem_unlink("MUTEXX");
+    sem_close(mutexlog);
+    sem_unlink("MUTEXLOG");
 
     //limpar threads
     for(int i=0; i<(qtd_max_partidas+qtd_max_chegadas); i++){
@@ -684,25 +688,27 @@ void redireciona(char* code,int i){
     sprintf(str,"%s LEAVING TO OTHER AIRPORT => FUEL = 0\n",code);
     ficheiro_log(str);
     (shm_arrivals+i)->init=-1; //libertar o espaço da shm
-
+    //remove_voo(code);
 }
 
 void *thread_fuel(void* arg){
     int i;
     while(1){
+        pthread_mutex_lock(&mutex_fuel);
         for(i=0;i<MAX_ARRIVALS;i++){
             if((shm_arrivals+i)->init != -1){
-                sem_wait(mutexx);
-                printf("INIT:  %d\n",(shm_arrivals+i)->init);
-                (shm_arrivals+i)->fuel--;
-                printf("fuel[%d]: %d\n",i,(shm_arrivals+i)->fuel);
-                sem_post(mutexx);
-
                 if((shm_arrivals+i)->fuel==0){
-                    redireciona((shm_arrivals+i)->code,i);
+                        //sem_wait(mutexx);
+                        redireciona((shm_arrivals+i)->code,i);
+                        //sem_post(mutexx);
                 }
+
+                //printf("INIT:  %d\n",(shm_arrivals+i)->init);
+                (shm_arrivals+i)->fuel--;
+                printf("code: %s fuel: %d\n",(shm_arrivals+i)->code,(shm_arrivals+i)->fuel);          
             }
-        }
+            }
+        pthread_mutex_unlock(&mutex_fuel);
         sleep(1);
     }
 }
@@ -722,7 +728,17 @@ void torre_de_controlo(){
 }
 
 
-
+void ficheiro_log(char* mensagem){//manter o ficheiro aberto, e mecanismo de sincronismo
+    sem_wait(mutexlog);
+    time_t horas;
+    struct tm* time_struct;
+    mensagem[strlen(mensagem)-1]='\0';
+    time(&horas);
+    time_struct = localtime(&horas);
+    fprintf(f_log,"%d:%d:%d %s\n",time_struct->tm_hour,time_struct->tm_min,time_struct->tm_sec,mensagem);
+    printf("%d:%d:%d %s\n",time_struct->tm_hour,time_struct->tm_min,time_struct->tm_sec,mensagem);
+    sem_post(mutexlog);
+}
 
 int inicia(){
     int message_queue;
@@ -747,6 +763,9 @@ int inicia(){
 
     sem_unlink("MUTEXX");
     mutexx=sem_open("MUTEXX",O_CREAT|O_EXCL,0700,1);
+
+    sem_unlink("MUTEXLOG");
+    mutexlog=sem_open("MUTEXLOG",O_CREAT|O_EXCL,0700,1);
 
     //cira a memoria partilhada
     cria_memoria();
@@ -773,10 +792,7 @@ int inicia(){
     pthread_create(&pipe_thread,NULL,thread_leitura,&pipe_thread_id);
 
     //THREAD que crias as outras threads
-    pthread_create(&time_thread,NULL,thread_cria_voos,&time_thread_id);
-
-    //THREAD que mandas as listas para a shared memory
-    
+    pthread_create(&time_thread,NULL,thread_cria_voos,&time_thread_id); 
 
     //THREAD para mostrar o tempo atual ya dps apaga-se
     pthread_create(&tempo_atual_thread,NULL,thread_controlo,&tempo_atual_thread_id);
@@ -798,17 +814,6 @@ int inicia(){
     return 0;
 }
 
-void ficheiro_log(char* mensagem){//manter o ficheiro aberto, e mecanismo de sincronismo
-    pthread_mutex_lock(&mutex);
-    time_t horas;
-    struct tm* time_struct;
-    mensagem[strlen(mensagem)-1]='\0';
-    time(&horas);
-    time_struct = localtime(&horas);
-    fprintf(f_log,"%d:%d:%d %s\n",time_struct->tm_hour,time_struct->tm_min,time_struct->tm_sec,mensagem);
-    printf("%d:%d:%d %s\n",time_struct->tm_hour,time_struct->tm_min,time_struct->tm_sec,mensagem);
-    pthread_mutex_unlock(&mutex);
-}
 
 
 int main() {
