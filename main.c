@@ -394,30 +394,6 @@ bool verifica_code(char* token){
     return true;
 }
 
-bool verifica_code(char* token){
-	//ver nos departures
-	struct departure* dep=header_departures;
-	struct arrival* arr=header_arrivals;
-    while(dep->next != NULL){
-        if(strcmp(dep->next->code,token)==0){
-            return false;
-        }
-        else{
-            dep=dep->next;
-        }
-    }
-    //ver nos arrivals
-    while(arr->next != NULL){
-        if(strcmp(arr->next->code,token)==0){
-            return false;
-        }
-        else{
-            arr=arr->next;
-        }
-    }
-    return true;
-}
-
 void cria_threads_voo();
 
 bool validacao(char * mensagem){
@@ -763,17 +739,6 @@ void torre(){ //tem de passar a thread
     }
 }
 
-
-void cria_threads_voo(){
-  ids[j] = j;
-  if((pthread_create(&thread_voos[j], NULL, gere_voos, &ids[j])) != 0){
-    printf("ERRO a criar thread\n");
-  }
-  printf("criou a thread[%d]\n", ids[j]);
-  j++;
-
-}
-
 void redireciona(char* code,int i){
     char str[1000];
     sprintf(str,"%s LEAVING TO OTHER AIRPORT => FUEL = 0\n",code);
@@ -830,7 +795,6 @@ void ficheiro_log(char* mensagem){//manter o ficheiro aberto, e mecanismo de sin
 }
 
 int inicia(){
-    int message_queue;
     pid_t processo;
     j=0;
     pthread_t pipe_thread;
