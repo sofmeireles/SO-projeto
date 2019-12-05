@@ -156,6 +156,7 @@ void add_voo(struct voo* node){
     printf("added flight\n");
 }
 
+/*
 void remove_arrival();
 void remove_departure();
 
@@ -199,7 +200,7 @@ void remove_voo(char* nome){
         }
     }
 }
-
+*/
 
 void add_departure(struct departure* node){
     struct departure* atual = header_departures;
@@ -553,7 +554,7 @@ void* thread_leitura(void* idp){
 
 void* thread_controlo(void* idp){
     int num;
-    char nome[100];
+    //char nome[100];
     while(1){
         scanf("%d",&num);
         if(num==1){
@@ -569,11 +570,11 @@ void* thread_controlo(void* idp){
         else if(num==3){
             printf("n. threads = %d\n",j);
         }
-        else if(num==4){
+        /*else if(num==4){
             printf("voo que quer eliminar:\n");
             scanf("%s",nome);
             remove_voo(nome);
-        }
+        }*/
     }
     pthread_exit(NULL);
     return NULL;
@@ -613,7 +614,6 @@ void* thread_cria_voos(void* idp){
                         i++;
                     }
                 }
-                cria_threads_voo();
                 if (atual_arrival->next->next!=NULL){
                     atual_arrival=atual_arrival->next;
                     printf("tempo espera: %d\n",atual_arrival->next->init - tempo_atual);
@@ -720,7 +720,7 @@ void cria_mensage_queue(){
   }else printf("Message queue criada!\n");
 }
 
-void torre(){ //tem de passar a thread
+void* msgq(void* agr){ //tem de passar a thread
     voos_send_msg msg;
     while(1){
       //Ler os departure
@@ -754,14 +754,14 @@ void *thread_fuel(void* arg){
         for(i=0;i<MAX_ARRIVALS;i++){
             if((shm_arrivals+i)->init != -1){
                 if((shm_arrivals+i)->fuel==0){
-                        redireciona((shm_arrivals+i)->code,i);
+                    redireciona((shm_arrivals+i)->code,i);
                 }
 
                 //printf("INIT:  %d\n",(shm_arrivals+i)->init);
                 (shm_arrivals+i)->fuel--;
-                printf("code: %s fuel: %d\n",(shm_arrivals+i)->code,(shm_arrivals+i)->fuel);          
+                //printf("code: %s fuel: %d\n",(shm_arrivals+i)->code,(shm_arrivals+i)->fuel);          
             }
-            }
+        }
         pthread_mutex_unlock(&mutex_fuel);
         sleep(1);
     }
@@ -769,7 +769,9 @@ void *thread_fuel(void* arg){
 
 void torre_de_controlo(){
     pthread_t fuel_thread;
+    pthread_t msgq_thread;
     int thread_fuel_id;
+    int thread_msgq_id;
     char str[1000];
     printf("PID da torre de controlo: %d\n",getpid());
     sprintf(str,"PID da torre de controlo: %d\n",getpid());
@@ -777,7 +779,12 @@ void torre_de_controlo(){
 
     //Thread que atualiza o combustível
     pthread_create(&fuel_thread,NULL,thread_fuel,&thread_fuel_id);
+
+    //Thread que lê a msg queue
+    pthread_create(&msgq_thread,NULL,msgq,&thread_msgq_id);
+
     
+    pthread_join(msgq_thread,NULL);
     pthread_join(fuel_thread,NULL);
 }
 
@@ -795,7 +802,6 @@ void ficheiro_log(char* mensagem){//manter o ficheiro aberto, e mecanismo de sin
 }
 
 int inicia(){
-    pid_t processo;
     j=0;
     pthread_t pipe_thread;
     pthread_t time_thread;
@@ -824,44 +830,9 @@ int inicia(){
     sem_unlink("MUTEXLOG");
     mutexlog=sem_open("MUTEXLOG",O_CREAT|O_EXCL,0700,1);
 
-    //cira a memoria partilhada
+
+    //cria a memoria partilhada
     cria_memoria();
-
-
-    processo=fork();
-
-    if(processo==0){
-        torre_de_controlo();
-    }
-
-    else{
-        printf("PID do gestor de simulacao: %d\n",getpid());
-    }
-
-    read_config();
-    //print_struct();
-
-    //cira a memoria partilhada
-    cria_memoria();
-
-    //PIPE
-    cria_pipe();
-    //para escrever no pipe abrir outro terminal e escrever echo "cena">input_pipe
-
-    //THREAD que lê o pipe
-    pthread_create(&pipe_thread,NULL,thread_leitura,&pipe_thread_id);
-
-    //THREAD que crias as outras threads
-    pthread_create(&time_thread,NULL,thread_cria_voos,&time_thread_id); 
-
-    //THREAD para mostrar o tempo atual ya dps apaga-se
-    pthread_create(&tempo_atual_thread,NULL,thread_controlo,&tempo_atual_thread_id);
-
-    //Inicia mutex
-    if (pthread_mutex_init(&mutex, NULL) != 0){
-        printf("Erro ao inicializar o mutex\n");
-        return -1;
-    }
 
     //MQ
     cria_mensage_queue();
@@ -873,8 +844,17 @@ int inicia(){
         sprintf(str,"PID da torre de controlo: %d \n",getpid());
         ficheiro_log(str);
         //execl("torre","torre");
-        torre();
+        torre_de_controlo();
     }
+
+
+    read_config();
+    //print_struct();
+
+
+    //PIPE
+    cria_pipe();
+    //para escrever no pipe abrir outro terminal e escrever echo "cena">input_pipe
 
     //THREAD que lê o pipe
     pthread_create(&pipe_thread,NULL,thread_leitura,(void*)&pipe_thread_id);
@@ -885,9 +865,6 @@ int inicia(){
     //THREAD para mostrar o tempo atual ya dps apaga-se
     pthread_create(&tempo_atual_thread,NULL,thread_controlo,(void*)&tempo_atual_thread_id);
 
-    //THREAD que crias as outras threads
-    pthread_create(&time_thread,NULL,thread_cria_voos,&time_thread_id);
-
     //THREAD para mostrar o tempo atual ya dps apaga-se
     pthread_create(&tempo_atual_thread,NULL,thread_controlo,&tempo_atual_thread_id);
 
@@ -895,10 +872,6 @@ int inicia(){
     if (pthread_mutex_init(&mutex, NULL) != 0){
         printf("Erro ao inicializar o mutex\n");
         return -1;
-    }
-
-    else{
-        printf("PID do gestor de simulacao: %d\n",getpid());
     }
 
     pthread_join(pipe_thread,NULL);
