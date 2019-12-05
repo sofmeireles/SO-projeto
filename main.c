@@ -23,6 +23,7 @@
 #include <time.h>
 #define PIPE_NAME "/tmp/input_pipe"
 #define MAX_THREADS 5000
+#define MAX_ARRIVALS 10
 
 //structs
 struct departure{
@@ -30,6 +31,7 @@ struct departure{
     int init;
     int takeoff;
     int holding;
+    int slot_shm;
     struct departure * next;
 };
 
@@ -39,7 +41,14 @@ struct arrival{
     int eta;
     int fuel;
     int holding;
+    struct arrival* slot_shm;
     struct arrival * next;
+};
+
+struct voo{
+    struct arrival* arr;
+    struct departure* dep;
+    struct voo* next;
 };
 
 typedef struct{
@@ -72,20 +81,26 @@ int hold_max;
 int hold_min;
 int qtd_max_partidas;
 int qtd_max_chegadas;
+int message_queue;
 int shmid;
+int shmid2;
 int j;
 time_t time_init;
 pthread_t thread_voos[MAX_THREADS];
 int ids[MAX_THREADS];
 struct arrival* header_arrivals;
 struct departure* header_departures;
+struct arrival* shm_arrivals;
+struct voo* header_voos;
 pthread_mutex_t mutex;
 pthread_mutex_t mutex2;
-FILE * f_log;
-pthread_t pipe_thread;
+pthread_mutex_t mutex_fuel;
 pthread_t time_thread;
 pthread_t tempo_atual_thread;
-int message_queue;
+pthread_t pipe_thread;
+FILE * f_log;
+sem_t *mutexx;
+sem_t *mutexlog;
 
 
 void print_struct(){
@@ -101,7 +116,7 @@ void print_arrivals(struct arrival* header){
     struct arrival* atual= header;
     if(atual->next == NULL) printf("lista vazia\n");
     while(atual->next != NULL){
-        printf("ARRIVAL %s init:%d eta:%d fuel:%d\n",atual->next->code,atual->next->init,atual->next->eta,atual->next->fuel);
+        printf("ARRIVAL %s init:%d eta:%d fuel_inicial:%d\n",atual->next->code,atual->next->init,atual->next->eta,atual->next->fuel);
         atual=atual->next;
     }
 }
@@ -115,9 +130,80 @@ void print_departures(struct departure* header){
     }
 }
 
+void print_voos(){
+    struct voo* atual= header_voos;
+    printf("TODOS OS VOOS\n");
+    if(atual->next == NULL) printf("lista vazia\n");
+    while(atual->next != NULL){
+        if(atual->next->arr==NULL){
+            printf("DEPARTURE %s init:%d takeoff:%d\n",atual->next->dep->code,atual->next->dep->init,atual->next->dep->takeoff);
+        }
+        else{
+            printf("ARRIVAL %s init:%d eta:%d fuel:%d\n",atual->next->arr->code,atual->next->arr->init,atual->next->arr->eta,atual->next->arr->fuel);
 
-void add_departure(struct departure* header,struct departure* node){
+        }
+        atual=atual->next; 
+    }
+}
+
+void add_voo(struct voo* node){
+    struct voo* atual = header_voos;
+    
+    while(atual->next != NULL){
+        atual=atual->next;
+    }
+    atual->next=node;
+    printf("added flight\n");
+}
+
+void remove_arrival();
+void remove_departure();
+
+void remove_voo(char* nome){
+    struct voo* atual=header_voos->next;
+    struct voo* anterior=header_voos;
+    while(atual->next != NULL){ 
+        if(atual->arr != NULL){
+            if(strcmp(atual->arr->code,nome)==0){
+                anterior->next=atual->next;
+                free(atual);
+                remove_arrival(nome);
+                break;
+            }
+        }
+        else if(atual->dep != NULL){
+            if(strcmp(atual->dep->code,nome)==0){
+                anterior->next=atual->next;
+                free(atual);
+                remove_departure(nome);
+                break;
+            }
+        }
+        atual=atual->next;
+        anterior=anterior->next;
+    }
+    if(atual->next==NULL){
+        if(atual->arr != NULL){
+            if(strcmp(atual->arr->code,nome)==0){
+                anterior->next=NULL;
+                free(atual);
+                remove_arrival(nome);
+            }
+        }
+        else if(atual->dep != NULL){
+            if(strcmp(atual->dep->code,nome)==0){
+                anterior->next=NULL;
+                free(atual);
+                remove_departure(nome);
+            }
+        }
+    }
+}
+
+
+void add_departure(struct departure* node){
     struct departure* atual = header_departures;
+    struct voo* novo_voo=malloc(sizeof(struct voo));
     while(atual->next !=NULL && atual->next->init < node->init){
             atual=atual->next;
     }
@@ -128,12 +214,17 @@ void add_departure(struct departure* header,struct departure* node){
         node->next=atual->next;
         atual->next=node;
     }
-
+    novo_voo->arr=NULL;
+    novo_voo->dep=node;
+    novo_voo->next=NULL;
+    add_voo(novo_voo);
     printf("added departure\n");
 }
 
-void add_arrival(struct arrival* header, struct arrival* node){
+void add_arrival(struct arrival* node){
     struct arrival* atual = header_arrivals;
+    struct voo* novo_voo=malloc(sizeof(struct voo));
+    sem_wait(mutexx);
     while(atual->next !=NULL && atual->next->init < node->init){
             atual=atual->next;
     }
@@ -144,7 +235,58 @@ void add_arrival(struct arrival* header, struct arrival* node){
         node->next=atual->next;
         atual->next=node;
     }
+    novo_voo->arr=node;
+    novo_voo->dep=NULL;
+    novo_voo->next=NULL;
+    add_voo(novo_voo);
+    sem_post(mutexx);
     printf("added arrival\n");
+}
+
+void remove_arrival(char* nome){
+    struct arrival* atual=header_arrivals->next;
+    struct arrival* anterior=header_arrivals;
+
+    while(atual->next != NULL){ 
+        if(strcmp(atual->code,nome)==0){
+            anterior->next=atual->next;
+            free(atual);
+            break;
+        }
+        else{
+            anterior=anterior->next;
+            atual=atual->next;
+        }
+    }
+    if(atual->next == NULL){
+            if(strcmp(atual->code,nome)==0){
+                anterior->next=NULL;
+                free(atual);
+            }
+    }
+}
+
+void remove_departure(char* nome){
+    struct departure* atual=header_departures->next;
+    struct departure* anterior=header_departures;
+
+    while(atual->next != NULL){ 
+        if(strcmp(atual->code,nome)==0){
+            anterior->next=atual->next;
+            free(atual);
+            break;
+        }
+        else{
+            anterior=anterior->next;
+            atual=atual->next;
+        }
+    }
+    if(atual->next == NULL){
+            if(strcmp(atual->code,nome)==0){
+                anterior->next=NULL;
+                free(atual);
+            }
+    }
 }
 
 void ficheiro_log(char* mensagem);
@@ -163,7 +305,7 @@ void read_config(){
     }
 
     while(fgets(linha,30,configs)){
-        if(i==0){
+        if(i==0){ 
             unidade=atoi(linha);
             if (unidade==0)
                 unidade=500;
@@ -252,6 +394,32 @@ bool verifica_code(char* token){
     return true;
 }
 
+bool verifica_code(char* token){
+	//ver nos departures
+	struct departure* dep=header_departures;
+	struct arrival* arr=header_arrivals;
+    while(dep->next != NULL){
+        if(strcmp(dep->next->code,token)==0){
+            return false;
+        }
+        else{
+            dep=dep->next;
+        }
+    }
+    //ver nos arrivals
+    while(arr->next != NULL){
+        if(strcmp(arr->next->code,token)==0){
+            return false;
+        }
+        else{
+            arr=arr->next;
+        }
+    }
+    return true;
+}
+
+void cria_threads_voo();
+
 bool validacao(char * mensagem){
     struct arrival* arr;
     struct departure* dep;
@@ -323,7 +491,7 @@ bool validacao(char * mensagem){
             	token[strlen(token)-1]='\0';
             	if(verifica_numero(token,strlen(token),0)==false) return false;
                 dep->takeoff=atoi(token);
-                add_departure(header_departures,dep);
+                add_departure(dep);
                 return true;
 
             }
@@ -335,7 +503,7 @@ bool validacao(char * mensagem){
                 	token[strlen(token)-1]='\0';
                 	if(verifica_numero(token,strlen(token),0)==false) return false;
                     arr->fuel = atoi(token);
-                    add_arrival(header_arrivals,arr);
+                    add_arrival(arr);
                     return true;
                 }
             }
@@ -359,21 +527,21 @@ void le_comandos(){
         read(fd,comando,1000);
         strcpy(cmd,comando);
         if (validacao(comando)==true){
-        	sprintf(str,"NEW COMMAND => %s\n",cmd);
+        	sprintf(str,"NEW COMMAND => %s",cmd);
             ficheiro_log(str);
         }
         else{
-        	sprintf(str,"WRONG COMMAND => %s\n",cmd);
+        	sprintf(str,"WRONG COMMAND => %s",cmd);
             ficheiro_log(str);
         }
+       
     }
-
+    
 }
 
 //função de operação das threads
-void *gere_voos(void* idp){
+void *gere_voos(void* arg){
     printf("criou um voo\n");
-
     pthread_exit(NULL);
 }
 
@@ -409,6 +577,7 @@ void* thread_leitura(void* idp){
 
 void* thread_controlo(void* idp){
     int num;
+    char nome[100];
     while(1){
         scanf("%d",&num);
         if(num==1){
@@ -418,10 +587,16 @@ void* thread_controlo(void* idp){
         else if(num==2){
             print_arrivals(header_arrivals);
             print_departures(header_departures);
+            print_voos();
 
         }
         else if(num==3){
             printf("n. threads = %d\n",j);
+        }
+        else if(num==4){
+            printf("voo que quer eliminar:\n");
+            scanf("%s",nome);
+            remove_voo(nome);
         }
     }
     pthread_exit(NULL);
@@ -432,6 +607,7 @@ void* thread_cria_voos(void* idp){
     struct arrival* atual_arrival=header_arrivals;
     struct departure* atual_departure=header_departures;
     voos_send_msg msg;
+    int i;
     while(1){
         int tempo_atual = (int)(time(NULL)-time_init);
         if (atual_arrival->next!=NULL){
@@ -448,6 +624,20 @@ void* thread_cria_voos(void* idp){
                   printf("erro a enviar a mensagem\n");
                   perror(0);
                 }
+                for(i=0;i<MAX_ARRIVALS;i++){
+                    if((shm_arrivals+i)->init == -1){
+                        printf("ola\n");
+                        atual_arrival->next->slot_shm=shm_arrivals+i;
+                        (shm_arrivals+i)->init=atual_arrival->next->init;
+                        (shm_arrivals+i)->fuel=atual_arrival->next->fuel;
+                        strcpy((shm_arrivals+i)->code,atual_arrival->next->code);
+                        break;
+                    }
+                    else{
+                        i++;
+                    }
+                }
+                cria_threads_voo();
                 if (atual_arrival->next->next!=NULL){
                     atual_arrival=atual_arrival->next;
                     printf("tempo espera: %d\n",atual_arrival->next->init - tempo_atual);
@@ -487,93 +677,58 @@ void* thread_cria_voos(void* idp){
     return NULL;
 }
 
-void* thread_controlo(void* idp){
-    int num;
-    while(1){
-        scanf("%d",&num);
-        if(num==1){
-            int tempo_atual = (int)(time(NULL)-time_init);
-            printf("tempo_atual: %d\n",tempo_atual);
-        }
-        else if(num==2){
-            print_arrivals(header_arrivals);
-            print_departures(header_departures);
-
-        }
-        else if(num==3){
-            printf("n. threads = %d\n",j);
-        }
-    }
-    pthread_exit(NULL);
-    return NULL;
-}
-
-void* thread_cria_voos(void* idp){
-    struct arrival* atual_arrival=header_arrivals;
-    struct departure* atual_departure=header_departures;
-    while(1){
-        int tempo_atual = (int)(time(NULL)-time_init);
-        if (atual_arrival->next!=NULL){
-            int tempo_prox_arr =atual_arrival->next->init;
-            if (tempo_atual == atual_arrival->next->init){
-                printf("init_arr: %d\n", atual_arrival->next->init);
-                cria_threads_voo();
-                if (atual_arrival->next->next!=NULL){
-                    atual_arrival=atual_arrival->next;
-                    printf("tempo espera: %d\n",atual_arrival->next->init - tempo_atual);
-                    sleep(tempo_prox_arr - tempo_atual);
-                }
-                else{
-                    sleep(1);
-                }
-            }
-        }
-        if (atual_departure->next != NULL){
-            int tempo_prox_dep = atual_departure->next->init;
-            if (tempo_atual == atual_departure->next->init){
-                printf("init_dep: %d\n", atual_departure->next->init);
-                cria_threads_voo();
-                if (atual_departure->next->next!=NULL){
-                    atual_departure=atual_departure->next;
-                    printf("tempo espera: %d\n",atual_departure->next->init - tempo_atual);
-                    sleep(tempo_prox_dep - tempo_atual);
-                }
-                else{
-                    sleep(1);
-                }
-            }
-        }
-
-    }
-    pthread_exit(NULL);
-    return NULL;
-}
-
 void cria_memoria(){
-  shmid = shmget(IPC_PRIVATE, sizeof(mem_structure), IPC_CREAT | 0766);
-  if(shmid < 0){
+    shmid = shmget(IPC_PRIVATE, sizeof(mem_structure), IPC_CREAT | 0766);
+    if(shmid < 0){
         printf("ERRO na criacao da memoria\n");
         exit(-1);
-        }
+    }
 
-        data = (mem_structure*)shmat(shmid, NULL, 0);
-        if(data == (mem_structure*)-1){
-            printf("ERRO no mapeamento da memoria\n");
-            exit(-1);
-        }
-        else{
-            printf("Memoria mapeada\n");
-        }
+    data = (mem_structure*)shmat(shmid, NULL, 0);
+    if(data == (mem_structure*)-1){
+        printf("ERRO no mapeamento da memoria\n");
+        exit(-1);
+    }
+    else{
+        printf("Memoria mapeada\n");
+    }
+
+    shmid2 = shmget(IPC_PRIVATE, sizeof(struct arrival)*MAX_ARRIVALS, IPC_CREAT | 0766);
+    if(shmid2 < 0){
+        printf("ERRO na criacao da memoria\n");
+        exit(-1);
+    }
+
+    shm_arrivals = (struct arrivals*)shmat(shmid, NULL, 0);
+    if(shm_arrivals == NULL){
+        printf("ERRO no mapeamento da memoria\n");
+        exit(-1);
+    }
+    else{
+        printf("Memoria mapeada\n");
+    }
+
+    for(int i=0;i<MAX_ARRIVALS;i++){
+        (shm_arrivals+i)->init=-1; //inicializar o init a -1 para conseguir incrementar o fuel
+    }
 }
 
 void sigint(int signum){
+    wait(NULL);
     printf("\n######### Departures #########\n");
     print_departures(header_departures);
     printf("######### ARRIVALS #########\n");
     print_arrivals(header_arrivals);
     //limpar memoria partilhada
     shmctl(shmid, IPC_RMID, NULL);
+    shmctl(shmid2, IPC_RMID, NULL);
     printf("Limpou a memoria\n");
+
+    //limpar mutexx
+    sem_close(mutexx);
+    sem_unlink("MUTEXX");
+    sem_close(mutexlog);
+    sem_unlink("MUTEXLOG");
 
     //limpar threads
     for(int i=0; i<(qtd_max_partidas+qtd_max_chegadas); i++){
@@ -589,7 +744,7 @@ void cria_mensage_queue(){
   }else printf("Message queue criada!\n");
 }
 
-void torre(){
+void torre(){ //tem de passar a thread
     voos_send_msg msg;
     while(1){
       //Ler os departure
@@ -609,8 +764,74 @@ void torre(){
 }
 
 
+void cria_threads_voo(){
+  ids[j] = j;
+  if((pthread_create(&thread_voos[j], NULL, gere_voos, &ids[j])) != 0){
+    printf("ERRO a criar thread\n");
+  }
+  printf("criou a thread[%d]\n", ids[j]);
+  j++;
+
+}
+
+void redireciona(char* code,int i){
+    char str[1000];
+    sprintf(str,"%s LEAVING TO OTHER AIRPORT => FUEL = 0\n",code);
+    ficheiro_log(str);
+    (shm_arrivals+i)->init=-1; //libertar o espaço da shm
+    //remove_voo(code);
+}
+
+void *thread_fuel(void* arg){
+    int i;
+    while(1){
+        pthread_mutex_lock(&mutex_fuel);
+        for(i=0;i<MAX_ARRIVALS;i++){
+            if((shm_arrivals+i)->init != -1){
+                if((shm_arrivals+i)->fuel==0){
+                        redireciona((shm_arrivals+i)->code,i);
+                }
+
+                //printf("INIT:  %d\n",(shm_arrivals+i)->init);
+                (shm_arrivals+i)->fuel--;
+                printf("code: %s fuel: %d\n",(shm_arrivals+i)->code,(shm_arrivals+i)->fuel);          
+            }
+            }
+        pthread_mutex_unlock(&mutex_fuel);
+        sleep(1);
+    }
+}
+
+void torre_de_controlo(){
+    pthread_t fuel_thread;
+    int thread_fuel_id;
+    char str[1000];
+    printf("PID da torre de controlo: %d\n",getpid());
+    sprintf(str,"PID da torre de controlo: %d\n",getpid());
+    ficheiro_log(str);
+
+    //Thread que atualiza o combustível
+    pthread_create(&fuel_thread,NULL,thread_fuel,&thread_fuel_id);
+    
+    pthread_join(fuel_thread,NULL);
+}
+
+
+void ficheiro_log(char* mensagem){//manter o ficheiro aberto, e mecanismo de sincronismo
+    sem_wait(mutexlog);
+    time_t horas;
+    struct tm* time_struct;
+    mensagem[strlen(mensagem)-1]='\0';
+    time(&horas);
+    time_struct = localtime(&horas);
+    fprintf(f_log,"%d:%d:%d %s\n",time_struct->tm_hour,time_struct->tm_min,time_struct->tm_sec,mensagem);
+    printf("%d:%d:%d %s\n",time_struct->tm_hour,time_struct->tm_min,time_struct->tm_sec,mensagem);
+    sem_post(mutexlog);
+}
+
 int inicia(){
     int message_queue;
+    pid_t processo;
     j=0;
     pthread_t pipe_thread;
     pthread_t time_thread;
@@ -629,9 +850,29 @@ int inicia(){
     header_arrivals->next=NULL;
     header_departures=malloc(sizeof(struct departure));
     header_departures->next=NULL;
+    header_voos=malloc(sizeof(struct voo));
+    header_voos->next=NULL;
     f_log=fopen("log.txt","a");
 
-    printf("\n\n>>PARA VER TEMPO ATUAL INSERIR: \"1\"<<\n\n");
+    sem_unlink("MUTEXX");
+    mutexx=sem_open("MUTEXX",O_CREAT|O_EXCL,0700,1);
+
+    sem_unlink("MUTEXLOG");
+    mutexlog=sem_open("MUTEXLOG",O_CREAT|O_EXCL,0700,1);
+
+    //cira a memoria partilhada
+    cria_memoria();
+
+
+    processo=fork();
+
+    if(processo==0){
+        torre_de_controlo();
+    }
+
+    else{
+        printf("PID do gestor de simulacao: %d\n",getpid());
+    }
 
     read_config();
     //print_struct();
@@ -642,6 +883,21 @@ int inicia(){
     //PIPE
     cria_pipe();
     //para escrever no pipe abrir outro terminal e escrever echo "cena">input_pipe
+
+    //THREAD que lê o pipe
+    pthread_create(&pipe_thread,NULL,thread_leitura,&pipe_thread_id);
+
+    //THREAD que crias as outras threads
+    pthread_create(&time_thread,NULL,thread_cria_voos,&time_thread_id); 
+
+    //THREAD para mostrar o tempo atual ya dps apaga-se
+    pthread_create(&tempo_atual_thread,NULL,thread_controlo,&tempo_atual_thread_id);
+
+    //Inicia mutex
+    if (pthread_mutex_init(&mutex, NULL) != 0){
+        printf("Erro ao inicializar o mutex\n");
+        return -1;
+    }
 
     //MQ
     cria_mensage_queue();
@@ -685,20 +941,9 @@ int inicia(){
     return 0;
 }
 
-void ficheiro_log(char* mensagem){//manter o ficheiro aberto, e mecanismo de sincronismo
-    pthread_mutex_lock(&mutex);
-    time_t horas;
-    struct tm* time_struct;
-    mensagem[strlen(mensagem)-1]='\0';
-    time(&horas);
-    time_struct = localtime(&horas);
-    fprintf(f_log,"%d:%d:%d %s",time_struct->tm_hour,time_struct->tm_min,time_struct->tm_sec,mensagem);
-    printf("%d:%d:%d %s\n",time_struct->tm_hour,time_struct->tm_min,time_struct->tm_sec,mensagem);
-    pthread_mutex_unlock(&mutex);
-}
-
 
 int main() {
+    
     inicia();
     fclose(f_log);
     wait(NULL);
