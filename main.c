@@ -22,7 +22,7 @@
 #include <signal.h>
 #include <time.h>
 #define PIPE_NAME "/tmp/input_pipe"
-#define MAX_THREADS 5000
+#define MAX_THREADS 5
 #define MAX_ARRIVALS 10
 
 //structs
@@ -41,6 +41,7 @@ struct arrival{
     int eta;
     int fuel;
     int holding;
+    int slot;
     struct arrival* slot_shm;
     struct arrival * next;
 };
@@ -49,6 +50,7 @@ struct voo{
     struct arrival* arr;
     struct departure* dep;
     struct voo* next;
+    int slot;
 };
 
 typedef struct{
@@ -66,9 +68,11 @@ mem_structure *data;
 
 typedef struct{
   long mtype;
+  char code[20];
   int takeoff;
   int eta;
   int fuel;
+  int ids;
 }voos_send_msg;
 
 //variaveis globais
@@ -81,6 +85,7 @@ int hold_max;
 int hold_min;
 int qtd_max_partidas;
 int qtd_max_chegadas;
+int qtd_max_voos;
 int message_queue;
 int shmid;
 int shmid2;
@@ -101,6 +106,7 @@ pthread_t pipe_thread;
 FILE * f_log;
 sem_t *mutexx;
 sem_t *mutexlog;
+sem_t *mutexmsg;
 
 
 void print_struct(){
@@ -518,8 +524,15 @@ void le_comandos(){
 
 //função de operação das threads
 void *gere_voos(void* arg){
+    voos_send_msg msg;
     printf("criou um voo\n");
-    pthread_exit(NULL);
+    while(1){
+      if((msgrcv(message_queue, &msg, sizeof(msg)-sizeof(long), 2, 0)) != -1){
+        printf("Recebi de volta %d\n", msg.ids);
+        printf("Recebi de volta %d, %d, %d \n", msg.fuel, msg.eta, msg.takeoff);
+        pthread_exit(NULL);
+      }
+    }
 }
 
 void cria_pipe(){
@@ -584,35 +597,20 @@ void* thread_cria_voos(void* idp){
     struct arrival* atual_arrival=header_arrivals;
     struct departure* atual_departure=header_departures;
     voos_send_msg msg;
-    int i;
     while(1){
         int tempo_atual = (int)(time(NULL)-time_init);
         if (atual_arrival->next!=NULL){
             int tempo_prox_arr =atual_arrival->next->init;
             if (tempo_atual == atual_arrival->next->init){
-                printf("init_arr: %d\n", atual_arrival->next->init);
-                cria_threads_voo();
                 //MQ
                 msg.eta = atual_arrival->next->eta;
                 msg.fuel  = atual_arrival->next->fuel;
+                strcpy(msg.code,atual_arrival->next->code);
                 msg.mtype = 1;
-                printf("sending(%d and %d)\n", msg.eta, msg.fuel);
+                printf("sending(%d and %d and %s)\n", msg.eta, msg.fuel, msg.code);
                 if( (msgsnd(message_queue, &msg, sizeof(msg)-sizeof(long), 0)) == -1){
                   printf("erro a enviar a mensagem\n");
                   perror(0);
-                }
-                for(i=0;i<MAX_ARRIVALS;i++){
-                    if((shm_arrivals+i)->init == -1){
-                        printf("ola\n");
-                        atual_arrival->next->slot_shm=shm_arrivals+i;
-                        (shm_arrivals+i)->init=atual_arrival->next->init;
-                        (shm_arrivals+i)->fuel=atual_arrival->next->fuel;
-                        strcpy((shm_arrivals+i)->code,atual_arrival->next->code);
-                        break;
-                    }
-                    else{
-                        i++;
-                    }
                 }
                 if (atual_arrival->next->next!=NULL){
                     atual_arrival=atual_arrival->next;
@@ -628,6 +626,16 @@ void* thread_cria_voos(void* idp){
             int tempo_prox_dep = atual_departure->next->init;
             if (tempo_atual == atual_departure->next->init){
                 printf("init_dep: %d\n", atual_departure->next->init);
+                //MQ
+                msg.takeoff = atual_departure->next->takeoff;
+                msg.mtype = 2;
+                strcpy(msg.code,atual_arrival->next->code);
+                msg.fuel=-1;
+                printf("sending(%d)\n", msg.takeoff);
+                if( (msgsnd(message_queue, &msg, sizeof(msg)-sizeof(long), 0)) == -1){
+                  printf("erro a enviar a mensagem\n");
+                  perror(0);
+                }
                 cria_threads_voo();
                 //MQ
                 msg.takeoff = atual_departure->next->takeoff;
@@ -668,10 +676,10 @@ void cria_memoria(){
     else{
         printf("Memoria mapeada\n");
     }
-
-    shmid2 = shmget(IPC_PRIVATE, sizeof(struct arrival)*MAX_ARRIVALS, IPC_CREAT | 0766);
+    printf("qtd max: %d\n",qtd_max_voos);
+    shmid2 = shmget(IPC_PRIVATE, sizeof(struct arrival)*MAX_THREADS, IPC_CREAT | 0766);
     if(shmid2 < 0){
-        printf("ERRO na criacao da memoria\n");
+        printf("ERRO na criacao da memoria2\n");
         exit(-1);
     }
 
@@ -684,8 +692,8 @@ void cria_memoria(){
         printf("Memoria mapeada\n");
     }
 
-    for(int i=0;i<MAX_ARRIVALS;i++){
-        (shm_arrivals+i)->init=-1; //inicializar o init a -1 para conseguir incrementar o fuel
+    for(int i=0;i<MAX_THREADS;i++){
+        (shm_arrivals+i)->init=-1; //inicializar o init a -1 (ficar vazio)
     }
 }
 
@@ -705,11 +713,14 @@ void sigint(int signum){
     sem_unlink("MUTEXX");
     sem_close(mutexlog);
     sem_unlink("MUTEXLOG");
+    sem_close(mutexmsg);
+    sem_unlink("MUTEXMSG");
 
     //limpar threads
+    /*
     for(int i=0; i<(qtd_max_partidas+qtd_max_chegadas); i++){
         pthread_cancel(thread_voos[i]);
-    }
+    }*/
     exit(0);
 }
 
@@ -720,23 +731,32 @@ void cria_mensage_queue(){
   }else printf("Message queue criada!\n");
 }
 
-void* msgq(void* agr){ //tem de passar a thread
+void* msgq(void* arg){
     voos_send_msg msg;
+    int i;
     while(1){
-            //Ler da MQ
-      if(msgrcv(message_queue, &msg, sizeof(msg)-sizeof(long), 1, 0) != -1){
-        printf("lido da MQ(%d takeoff, %d eta, %d fuel)\n", msg.takeoff, msg.eta, msg.fuel);
-        //msg.ids = &data->ids_voos[k];
-        msg.mtype = 2;
-        k++;
-        //para teste
-        msg.takeoff = 123;
-        msg.eta = 123;
-        msg.fuel = 123;
-        //fim do teste
-        if( (msgsnd(message_queue, &msg, sizeof(msg)-sizeof(long), 0)) == -1){
-          printf("Erro a responder da torre");
-          perror(0);
+        if(msgrcv(message_queue, &msg, sizeof(msg)-sizeof(long), 1, 0) != -1){
+            printf("lido da MQ(%d takeoff, %d eta, %d fuel)\n", msg.takeoff, msg.eta, msg.fuel);
+        }
+        if(msg.fuel != -1){
+            for(i=0;i<MAX_THREADS;i++){
+                if((shm_arrivals+i)->slot == 0){
+                    (shm_arrivals+i)->slot = 1;//"ocupar" o slot da shm
+                    (shm_arrivals+i)->fuel=msg.fuel;
+                    msg.mtype = 2;
+                    msg.ids=(int)(shm_arrivals+i);
+                    strcpy((shm_arrivals+i)->code,msg.code);
+                    // ENVIAR PRA MSQ ->  shm_voos+i;
+                    if( (msgsnd(message_queue, &msg, sizeof(msg)-sizeof(long), 0)) == -1){
+                        printf("Erro a responder da torre");
+                        perror(0);
+                    }
+                    break;
+                }
+                else{
+                    i++;
+                }
+            }
         }
     }
 }
@@ -745,26 +765,24 @@ void redireciona(char* code,int i){
     char str[1000];
     sprintf(str,"%s LEAVING TO OTHER AIRPORT => FUEL = 0\n",code);
     ficheiro_log(str);
-    (shm_arrivals+i)->init=-1; //libertar o espaço da shm
+    (shm_arrivals+i)->slot=0; //libertar o espaço da shm
     //remove_voo(code);
 }
 
 void *thread_fuel(void* arg){
     int i;
     while(1){
-        pthread_mutex_lock(&mutex_fuel);
         for(i=0;i<MAX_ARRIVALS;i++){
-            if((shm_arrivals+i)->init != -1){
+            if((shm_arrivals+i)->slot != 0){
                 if((shm_arrivals+i)->fuel==0){
+                    pthread_mutex_lock(&mutex_fuel);
                     redireciona((shm_arrivals+i)->code,i);
+                    pthread_mutex_unlock(&mutex_fuel);
                 }
-
-                //printf("INIT:  %d\n",(shm_arrivals+i)->init);
-                (shm_arrivals+i)->fuel--;
                 //printf("code: %s fuel: %d\n",(shm_arrivals+i)->code,(shm_arrivals+i)->fuel);          
+                (shm_arrivals+i)->fuel--;
             }
         }
-        pthread_mutex_unlock(&mutex_fuel);
         sleep(1);
     }
 }
@@ -832,6 +850,12 @@ int inicia(){
     sem_unlink("MUTEXLOG");
     mutexlog=sem_open("MUTEXLOG",O_CREAT|O_EXCL,0700,1);
 
+    sem_unlink("MUTEXMSG");
+    mutexx=sem_open("MUTEXMSG",O_CREAT|O_EXCL,0700,1);
+
+    read_config();
+    qtd_max_voos=qtd_max_chegadas+qtd_max_partidas;
+    //print_struct();
 
     //cria a memoria partilhada
     cria_memoria();
@@ -850,8 +874,6 @@ int inicia(){
     }
 
 
-    read_config();
-    //print_struct();
 
 
     //PIPE
