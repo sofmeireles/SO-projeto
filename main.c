@@ -1,3 +1,5 @@
+//run with gcc -pthread -D_REENTRANT -Wall main2.c -o main2
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/ipc.h>
@@ -20,7 +22,7 @@
 #include <signal.h>
 #include <time.h>
 #define PIPE_NAME "/tmp/input_pipe"
-#define MAX_THREADS 5000
+#define MAX_THREADS 5
 #define MAX_ARRIVALS 10
 
 //structs
@@ -39,6 +41,7 @@ struct arrival{
     int eta;
     int fuel;
     int holding;
+    int slot;
     struct arrival* slot_shm;
     struct arrival * next;
 };
@@ -47,6 +50,7 @@ struct voo{
     struct arrival* arr;
     struct departure* dep;
     struct voo* next;
+    int slot;
 };
 
 typedef struct{
@@ -59,9 +63,16 @@ typedef struct{
   int m_mh_hurg;
   int num_voos_red;
   int voos_rejeitados;
-  
 }mem_structure;
 mem_structure *data;
+
+typedef struct{
+  long mtype;
+  char code[20];
+  int takeoff;
+  int eta;
+  int fuel;
+}voos_send_msg;
 
 //variaveis globais
 int unidade;
@@ -73,6 +84,8 @@ int hold_max;
 int hold_min;
 int qtd_max_partidas;
 int qtd_max_chegadas;
+int qtd_max_voos;
+int message_queue;
 int shmid;
 int shmid2;
 int j;
@@ -81,14 +94,19 @@ pthread_t thread_voos[MAX_THREADS];
 int ids[MAX_THREADS];
 struct arrival* header_arrivals;
 struct departure* header_departures;
-struct voo* header_voos;
+
 struct arrival* shm_arrivals;
+struct voo* header_voos;
 pthread_mutex_t mutex;
 pthread_mutex_t mutex2;
 pthread_mutex_t mutex_fuel;
+pthread_t time_thread;
+pthread_t tempo_atual_thread;
+pthread_t pipe_thread;
+FILE * f_log;
 sem_t *mutexx;
 sem_t *mutexlog;
-FILE * f_log;
+sem_t *mutexmsg;
 
 
 void print_struct(){
@@ -144,6 +162,7 @@ void add_voo(struct voo* node){
     printf("added flight\n");
 }
 
+/*
 void remove_arrival();
 void remove_departure();
 
@@ -187,7 +206,7 @@ void remove_voo(char* nome){
         }
     }
 }
-
+*/
 
 void add_departure(struct departure* node){
     struct departure* atual = header_departures;
@@ -413,7 +432,6 @@ bool validacao(char * mensagem){
         token=strtok(NULL,dem);
         //printf("token [%d]: %s\n",i,token);
         if(token == NULL){
-            printf("FODA-SE\n");
             break;
         }
         if (i==1){ //flight_code
@@ -519,6 +537,16 @@ void cria_pipe(){
 
 void ve_inits();
 
+
+void cria_threads_voo(){
+  ids[j] = j;
+  if((pthread_create(&thread_voos[j], NULL, gere_voos,(void*) &ids[j])) != 0){
+    printf("ERRO a criar thread\n");
+  }
+  printf("criou a thread[%d]\n", ids[j]);
+  j++;
+}
+
 void* thread_leitura(void* idp){
     while(1){
     	pthread_mutex_lock(&mutex2);
@@ -532,7 +560,7 @@ void* thread_leitura(void* idp){
 
 void* thread_controlo(void* idp){
     int num;
-    char nome[100];
+    //char nome[100];
     while(1){
         scanf("%d",&num);
         if(num==1){
@@ -548,11 +576,11 @@ void* thread_controlo(void* idp){
         else if(num==3){
             printf("n. threads = %d\n",j);
         }
-        else if(num==4){
+        /*else if(num==4){
             printf("voo que quer eliminar:\n");
             scanf("%s",nome);
             remove_voo(nome);
-        }
+        }*/
     }
     pthread_exit(NULL);
     return NULL;
@@ -561,25 +589,21 @@ void* thread_controlo(void* idp){
 void* thread_cria_voos(void* idp){
     struct arrival* atual_arrival=header_arrivals;
     struct departure* atual_departure=header_departures;
-    int i;
+    voos_send_msg msg;
     while(1){
         int tempo_atual = (int)(time(NULL)-time_init);
         if (atual_arrival->next!=NULL){
             int tempo_prox_arr =atual_arrival->next->init;
             if (tempo_atual == atual_arrival->next->init){
-                printf("init_arr: %d\n", atual_arrival->next->init);
-                for(i=0;i<MAX_ARRIVALS;i++){
-                    if((shm_arrivals+i)->init == -1){
-                        printf("ola\n");
-                        atual_arrival->next->slot_shm=shm_arrivals+i;
-                        (shm_arrivals+i)->init=atual_arrival->next->init;
-                        (shm_arrivals+i)->fuel=atual_arrival->next->fuel;
-                        strcpy((shm_arrivals+i)->code,atual_arrival->next->code);
-                        break;
-                    }
-                    else{
-                        i++;
-                    }
+                //MQ
+                msg.eta = atual_arrival->next->eta;
+                msg.fuel  = atual_arrival->next->fuel;
+                strcpy(msg.code,atual_arrival->next->code);
+                msg.mtype = 1;
+                printf("sending(%d and %d and %s)\n", msg.eta, msg.fuel, msg.code);
+                if( (msgsnd(message_queue, &msg, sizeof(msg)-sizeof(long), 0)) == -1){
+                  printf("erro a enviar a mensagem\n");
+                  perror(0);
                 }
                 cria_threads_voo();
                 if (atual_arrival->next->next!=NULL){
@@ -596,12 +620,22 @@ void* thread_cria_voos(void* idp){
             int tempo_prox_dep = atual_departure->next->init;
             if (tempo_atual == atual_departure->next->init){
                 printf("init_dep: %d\n", atual_departure->next->init);
+                //MQ
+                msg.takeoff = atual_departure->next->takeoff;
+                msg.mtype = 2;
+                strcpy(msg.code,atual_arrival->next->code);
+                msg.fuel=-1;
+                printf("sending(%d)\n", msg.takeoff);
+                if( (msgsnd(message_queue, &msg, sizeof(msg)-sizeof(long), 0)) == -1){
+                  printf("erro a enviar a mensagem\n");
+                  perror(0);
+                }
                 cria_threads_voo();
                 if (atual_departure->next->next!=NULL){
                     atual_departure=atual_departure->next;
                     printf("tempo espera: %d\n",atual_departure->next->init - tempo_atual);
                     sleep(tempo_prox_dep - tempo_atual);
-                } 
+                }
                 else{
                     sleep(1);
                 }
@@ -628,10 +662,10 @@ void cria_memoria(){
     else{
         printf("Memoria mapeada\n");
     }
-
-    shmid2 = shmget(IPC_PRIVATE, sizeof(struct arrival)*MAX_ARRIVALS, IPC_CREAT | 0766);
+    printf("qtd max: %d\n",qtd_max_voos);
+    shmid2 = shmget(IPC_PRIVATE, sizeof(struct arrival)*MAX_THREADS, IPC_CREAT | 0766);
     if(shmid2 < 0){
-        printf("ERRO na criacao da memoria\n");
+        printf("ERRO na criacao da memoria2\n");
         exit(-1);
     }
 
@@ -644,8 +678,8 @@ void cria_memoria(){
         printf("Memoria mapeada\n");
     }
 
-    for(int i=0;i<MAX_ARRIVALS;i++){
-        (shm_arrivals+i)->init=-1; //inicializar o init a -1 para conseguir incrementar o fuel
+    for(int i=0;i<MAX_THREADS;i++){
+        (shm_arrivals+i)->init=-1; //inicializar o init a -1 (ficar vazio)
     }
 }
 
@@ -665,55 +699,84 @@ void sigint(int signum){
     sem_unlink("MUTEXX");
     sem_close(mutexlog);
     sem_unlink("MUTEXLOG");
+    sem_close(mutexmsg);
+    sem_unlink("MUTEXMSG");
 
     //limpar threads
+    /*
     for(int i=0; i<(qtd_max_partidas+qtd_max_chegadas); i++){
         pthread_cancel(thread_voos[i]);
-    }
+    }*/
     exit(0);
 }
 
-void cria_threads_voo(){
-  ids[j] = j;
-  if((pthread_create(&thread_voos[j], NULL, gere_voos, &ids[j])) != 0){
-    printf("ERRO a criar thread\n");
-  }
-  printf("criou a thread[%d]\n", ids[j]);
-  j++;
+void cria_mensage_queue(){
+  if ((message_queue = msgget(IPC_PRIVATE, IPC_CREAT | 0700))==-1){
+      printf("Erro ao criar a message queue!\n");
+      exit(0);
+  }else printf("Message queue criada!\n");
+}
 
+void* msgq(void* arg){
+    voos_send_msg msg;
+    int i;
+    while(1){
+        if(msgrcv(message_queue, &msg, sizeof(msg)-sizeof(long), 1, 0) == -1){
+            printf("erro a ler a mesage queue");
+            perror(0);
+        }
+        if(msg.fuel != -1){
+            for(i=0;i<MAX_THREADS;i++){
+                //sem_wait(mutexmsg);
+                if((shm_arrivals+i)->slot == 0){
+                    (shm_arrivals+i)->slot = 1;//"ocupar" o slot da shm
+                    // ENVIAR PRA MSQ ->  shm_voos+i;
+                    (shm_arrivals+i)->fuel=msg.fuel;
+                    strcpy((shm_arrivals+i)->code,msg.code);
+                    //sem_post(mutexmsg);
+                    break;
+                }
+                else{
+                    i++;
+                }
+            }
+        }
+        printf("cona\n");
+
+    }
 }
 
 void redireciona(char* code,int i){
     char str[1000];
     sprintf(str,"%s LEAVING TO OTHER AIRPORT => FUEL = 0\n",code);
     ficheiro_log(str);
-    (shm_arrivals+i)->init=-1; //libertar o espaço da shm
+    (shm_arrivals+i)->slot=0; //libertar o espaço da shm
     //remove_voo(code);
 }
 
 void *thread_fuel(void* arg){
     int i;
     while(1){
-        pthread_mutex_lock(&mutex_fuel);
         for(i=0;i<MAX_ARRIVALS;i++){
-            if((shm_arrivals+i)->init != -1){
+            if((shm_arrivals+i)->slot != 0){
                 if((shm_arrivals+i)->fuel==0){
-                        redireciona((shm_arrivals+i)->code,i);
+                    pthread_mutex_lock(&mutex_fuel);
+                    redireciona((shm_arrivals+i)->code,i);
+                    pthread_mutex_unlock(&mutex_fuel);
                 }
-
-                //printf("INIT:  %d\n",(shm_arrivals+i)->init);
+                //printf("code: %s fuel: %d\n",(shm_arrivals+i)->code,(shm_arrivals+i)->fuel);          
                 (shm_arrivals+i)->fuel--;
-                printf("code: %s fuel: %d\n",(shm_arrivals+i)->code,(shm_arrivals+i)->fuel);          
             }
-            }
-        pthread_mutex_unlock(&mutex_fuel);
+        }
         sleep(1);
     }
 }
 
 void torre_de_controlo(){
     pthread_t fuel_thread;
+    pthread_t msgq_thread;
     int thread_fuel_id;
+    int thread_msgq_id;
     char str[1000];
     printf("PID da torre de controlo: %d\n",getpid());
     sprintf(str,"PID da torre de controlo: %d\n",getpid());
@@ -721,7 +784,12 @@ void torre_de_controlo(){
 
     //Thread que atualiza o combustível
     pthread_create(&fuel_thread,NULL,thread_fuel,&thread_fuel_id);
+
+    //Thread que lê a msg queue
+    pthread_create(&msgq_thread,NULL,msgq,&thread_msgq_id);
+
     
+    pthread_join(msgq_thread,NULL);
     pthread_join(fuel_thread,NULL);
 }
 
@@ -739,15 +807,17 @@ void ficheiro_log(char* mensagem){//manter o ficheiro aberto, e mecanismo de sin
 }
 
 int inicia(){
-    int message_queue;
-    pid_t processo;
     j=0;
     pthread_t pipe_thread;
     pthread_t time_thread;
     pthread_t tempo_atual_thread;
+    pid_t torre_controlo;
+    //j=0;
+
     int pipe_thread_id;
     int time_thread_id;
     int tempo_atual_thread_id;
+    char str[1000];
     signal(SIGINT, sigint);
     time_init = time(NULL);
     //printf("time: %d",time_init);
@@ -765,32 +835,46 @@ int inicia(){
     sem_unlink("MUTEXLOG");
     mutexlog=sem_open("MUTEXLOG",O_CREAT|O_EXCL,0700,1);
 
-    //cira a memoria partilhada
+    sem_unlink("MUTEXMSG");
+    mutexx=sem_open("MUTEXMSG",O_CREAT|O_EXCL,0700,1);
+
+    read_config();
+    qtd_max_voos=qtd_max_chegadas+qtd_max_partidas;
+    //print_struct();
+
+    //cria a memoria partilhada
     cria_memoria();
 
+    //MQ
+    cria_mensage_queue();
 
-    processo=fork();
 
-    if(processo==0){
+
+    torre_controlo=fork();
+
+    if(torre_controlo==0){
+        printf("PID da torre de controlo: %d\n",getpid());
+        sprintf(str,"PID da torre de controlo: %d \n",getpid());
+        ficheiro_log(str);
+        //execl("torre","torre");
         torre_de_controlo();
     }
 
-    else{
-        printf("PID do gestor de simulacao: %d\n",getpid());
-    }
 
-    read_config();
-    //print_struct();
 
 
     //PIPE
     cria_pipe();
+    //para escrever no pipe abrir outro terminal e escrever echo "cena">input_pipe
 
     //THREAD que lê o pipe
-    pthread_create(&pipe_thread,NULL,thread_leitura,&pipe_thread_id);
+    pthread_create(&pipe_thread,NULL,thread_leitura,(void*)&pipe_thread_id);
 
     //THREAD que crias as outras threads
-    pthread_create(&time_thread,NULL,thread_cria_voos,&time_thread_id); 
+    pthread_create(&time_thread,NULL,thread_cria_voos,(void*)&time_thread_id);
+
+    //THREAD para mostrar o tempo atual ya dps apaga-se
+    pthread_create(&tempo_atual_thread,NULL,thread_controlo,(void*)&tempo_atual_thread_id);
 
     //THREAD para mostrar o tempo atual ya dps apaga-se
     pthread_create(&tempo_atual_thread,NULL,thread_controlo,&tempo_atual_thread_id);
@@ -801,17 +885,9 @@ int inicia(){
         return -1;
     }
 
-    //MQ
-    if ((message_queue = msgget(IPC_PRIVATE, IPC_CREAT | 0700))==-1){
-        printf("Erro ao criar a message queue!\n");
-        return -1;
-    }else printf("Message queue criada!\n");
-
-
     pthread_join(pipe_thread,NULL);
     return 0;
 }
-
 
 
 int main() {
