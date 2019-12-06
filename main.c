@@ -22,8 +22,8 @@
 #include <signal.h>
 #include <time.h>
 #define PIPE_NAME "/tmp/input_pipe"
-#define MAX_THREADS 5
-#define MAX_ARRIVALS 10
+#define MAX_THREADS 5000
+#define MAX_ARRIVALS 5000
 
 //structs
 struct departure{
