@@ -723,19 +723,21 @@ void cria_mensage_queue(){
 void* msgq(void* agr){ //tem de passar a thread
     voos_send_msg msg;
     while(1){
-      //Ler os departure
-      if(msgrcv(message_queue, &msg, sizeof(msg)-sizeof(long), 2, 0) == -1){
-        printf("erro a ler a mesage queue");
-        perror(0);
-      }
-      printf("lido da MQ2(%d)\n", msg.takeoff);
-      //ler os arrivel
-      if(msgrcv(message_queue, &msg, sizeof(msg)-sizeof(long), 1, 0) == -1){
-        printf("erro a ler a mesage queue");
-        perror(0);
-      }
-      printf("lido da MQ1(%d, %d)\n", msg.eta, msg.fuel);
-
+            //Ler da MQ
+      if(msgrcv(message_queue, &msg, sizeof(msg)-sizeof(long), 1, 0) != -1){
+        printf("lido da MQ(%d takeoff, %d eta, %d fuel)\n", msg.takeoff, msg.eta, msg.fuel);
+        //msg.ids = &data->ids_voos[k];
+        msg.mtype = 2;
+        k++;
+        //para teste
+        msg.takeoff = 123;
+        msg.eta = 123;
+        msg.fuel = 123;
+        //fim do teste
+        if( (msgsnd(message_queue, &msg, sizeof(msg)-sizeof(long), 0)) == -1){
+          printf("Erro a responder da torre");
+          perror(0);
+        }
     }
 }
 
@@ -780,7 +782,7 @@ void torre_de_controlo(){
     //Thread que atualiza o combustível
     pthread_create(&fuel_thread,NULL,thread_fuel,&thread_fuel_id);
 
-    //Thread que lê a msg queue
+    //Thread que lê a msg queue e devolve ao voo o seu espaço na shared memory
     pthread_create(&msgq_thread,NULL,msgq,&thread_msgq_id);
 
     
