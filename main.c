@@ -518,8 +518,15 @@ void le_comandos(){
 
 //função de operação das threads
 void *gere_voos(void* arg){
+    voos_send_msg msg;
     printf("criou um voo\n");
-    pthread_exit(NULL);
+    while(1){
+      if((msgrcv(message_queue, &msg, sizeof(msg)-sizeof(long), 2, 0)) != -1){
+        //printf("Recebi de volta %d\n", msg.ids);
+        printf("Recebi de volta %d, %d, %d \n", msg.fuel, msg.eta, msg.takeof);
+        pthread_exit(NULL);
+      }
+    }
 }
 
 void cria_pipe(){
