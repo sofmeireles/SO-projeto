@@ -761,7 +761,7 @@ void cria_memoria(){
     }
 }
 
-void sigint(int signum){
+void sigtstp(int signum){
     wait(NULL);
     printf("\n######### Departures #########\n");
     print_departures(header_departures);
@@ -787,6 +787,21 @@ void sigint(int signum){
         pthread_cancel(thread_voos[i]);
     }*/
     exit(0);
+}
+
+void sigint(int signum){
+    //struct data* data;
+    printf("\tCTRL-C PRIMIDO\t\n");
+    /*printf("Numero total de voos criados: %d", data->num_voos_criados);
+    printf("Numero total de voos que aterraram: %d", data->num_voos_atr);
+    printf("Tempo médio de espera: %d", data->temp_de_esp_atr);
+    printf("Numero total de voos que descolaram: %d, data->num_voos_desc");
+    printf("Tempo médio de espera para descolar: %d", data->temp_de_esp_desc);
+    printf("Número médio de manobras de holding por voo de aterragem: %d", data->m_mh_atr),
+    printf("Numero médio de manobras de holding por voo em estado de emergencia: %d", data->m_mh_hurg);
+    printf("Numero de voos redirecionados para outro aeroporto: %d", data->num_voos_red);
+    printf("Numero de voos rejeitados pela Torre de Controlo: %d", data->voos_rejeitados);*/
+    printf("AHAHAHAHAHHAHAHAHAHAHAHAHAHAH");
 }
 
 void cria_mensage_queue(){
@@ -880,7 +895,6 @@ void *thread_fuel(void* arg){
     }
 }
 
-
 void torre_de_controlo(){
     pthread_t fuel_thread;
     pthread_t msgq_thread;
@@ -890,6 +904,7 @@ void torre_de_controlo(){
     fila_arrivals->next=NULL;
     fila_departures=malloc(sizeof(struct departure));
     fila_departures->next=NULL;
+    signal(SIGINT, sigint);//imprime as estatisticas quando se prime CTRL-C
     //char str[1000];
     //printf("PID da torre de controlo: %d\n",getpid());
     //sprintf(str,"PID da torre de controlo: %d\n",getpid());
@@ -930,7 +945,8 @@ int inicia(){
     int time_thread_id;
     int tempo_atual_thread_id;
     char str[1000];
-    signal(SIGINT, sigint);
+    signal(SIGTSTP, sigtstp);
+    signal(SIGINT, SIG_IGN);
     time_init = time(NULL);
     //printf("time: %d",time_init);
     header_arrivals=malloc(sizeof(struct arrival));
