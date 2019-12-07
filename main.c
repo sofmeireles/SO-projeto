@@ -43,7 +43,7 @@ struct arrival{
     int fuel;
     int holding;
     int slot;
-    struct arrival* slot_shm;
+    int prioridade;
     struct arrival * next;
 };
 
@@ -99,6 +99,8 @@ struct arrival* header_arrivals;
 struct departure* header_departures;
 struct arrival* shm_arrivals;
 struct departure* shm_departures;
+struct arrival* fila_arrivals;
+struct departure* fila_departures;
 struct voo* header_voos;
 pthread_mutex_t mutex;
 pthread_mutex_t mutex2;
@@ -127,6 +129,15 @@ void print_arrivals(struct arrival* header){
     while(atual->next != NULL){
         printf("ARRIVAL %s init:%d eta:%d fuel_inicial:%d\n",atual->next->code,atual->next->init,atual->next->eta,atual->next->fuel);
         atual=atual->next;
+    }
+}
+
+void print_arr_shm(struct arrival* shm_arrivals){
+    printf("\nARRIVALS NA SHM:\n");
+    for(int i =0; i<MAX_ARRIVALS;i++){
+        if((shm_arrivals+i)->slot != 0){
+            printf("\tARRIVAL %s init:%d eta:%d fuel:%d prioridade: %d\n",(shm_arrivals+i)->code,(shm_arrivals+i)->init,(shm_arrivals+i)->eta,(shm_arrivals+i)->fuel,(shm_arrivals+i)->prioridade);
+        }
     }
 }
 
@@ -298,6 +309,49 @@ void remove_departure(char* nome){
             }
     }
 }
+
+void add_fila_arrivals(struct arrival* node){
+    struct arrival* atual = fila_arrivals;
+    printf("\n");
+    while(atual->next !=NULL){
+        if(atual->next->prioridade > node->prioridade){
+            atual=atual->next;
+        }
+        else if(atual->next->prioridade == node->prioridade) {
+            if (atual->next->eta < node->eta) {
+                atual = atual->next;
+            }
+            node->next = atual->next;
+            atual->next = node;
+            break;
+        }
+        else{
+            node->next = atual->next;
+            atual->next = node;
+            break;
+        }
+    }
+    if(atual->next==NULL){
+        atual->next=node;
+    }
+    //print_arrivals(fila_arrivals);
+}
+
+void add_fila_departures(struct departure* node){
+    struct departure* atual = fila_departures;
+    while(atual->next !=NULL && atual->next->takeoff < node->takeoff){
+            atual=atual->next;
+    }
+    if(atual->next==NULL){
+        atual->next=node;
+    }
+    else{
+        node->next=atual->next;
+        atual->next=node;
+    }
+    //printf("added departure à fila\n");
+}
+
 
 void ficheiro_log(char* mensagem);
 
@@ -586,11 +640,11 @@ void* thread_controlo(void* idp){
         else if(num==3){
             printf("n. threads = %d\n",j);
         }
-        /*else if(num==4){
-            printf("voo que quer eliminar:\n");
-            scanf("%s",nome);
-            remove_voo(nome);
-        }*/
+        else if(num==4){
+            print_arr_shm(shm_arrivals);
+            print_departures(fila_departures);
+            print_arrivals(fila_arrivals);
+        }
     }
     pthread_exit(NULL);
     return NULL;
@@ -687,7 +741,7 @@ void cria_memoria(){
         printf("Memoria mapeada\n");
     }
 
-    for(int i=0;i<MAX_THREADS;i++){
+    for(int i=0;i<MAX_ARRIVALS;i++){
         (shm_arrivals+i)->init=-1; //inicializar o init a -1 (ficar vazio)
     }
 
@@ -754,9 +808,11 @@ void* msgq(void* arg){
                 if((shm_arrivals+i)->slot == 0){
                     (shm_arrivals+i)->slot = 1;//"ocupar" o slot da shm
                     (shm_arrivals+i)->fuel=msg.fuel;
+                    (shm_arrivals+i)->prioridade=0;
                     msg.mtype = 2;
                     msg.ids=(int)(shm_arrivals+i);
                     strcpy((shm_arrivals+i)->code,msg.code);
+                    add_fila_arrivals(shm_arrivals);
                     // ENVIAR PRA MSQ ->  shm_voos+i;
                     if( (msgsnd(message_queue, &msg, sizeof(msg)-sizeof(long), 0)) == -1){
                         printf("Erro a responder da torre");
@@ -776,6 +832,7 @@ void* msgq(void* arg){
                     (shm_departures+i)->takeoff=msg.takeoff;
                     msg.mtype = 2;
                     strcpy((shm_departures+i)->code,msg.code);
+                    add_fila_departures(shm_departures);
                     // ENVIAR PRA MSQ ->  shm_voos+i;
                     msg.ids=(int)(shm_arrivals+i);
                     if( (msgsnd(message_queue, &msg, sizeof(msg)-sizeof(long), 0)) == -1){
@@ -789,6 +846,7 @@ void* msgq(void* arg){
                 }
             }
         }
+        sleep(1);
     }
 }
 
@@ -805,6 +863,10 @@ void *thread_fuel(void* arg){
     while(1){
         for(i=0;i<MAX_ARRIVALS;i++){
             if((shm_arrivals+i)->slot != 0){
+                //aumentar a prioridade
+                if((shm_arrivals+i)->fuel <= (4+ (shm_arrivals+i)->eta + duracao_aterragem)){
+                    (shm_arrivals+i)->prioridade++;
+                }
                 if((shm_arrivals+i)->fuel==0){
                     pthread_mutex_lock(&mutex_fuel);
                     redireciona((shm_arrivals+i)->code,i);
@@ -812,28 +874,33 @@ void *thread_fuel(void* arg){
                 }
                 //printf("code: %s fuel: %d\n",(shm_arrivals+i)->code,(shm_arrivals+i)->fuel);          
                 (shm_arrivals+i)->fuel--;
+                //print_arr_shm(shm_arrivals);
             }
         }
         sleep(1);
     }
 }
 
+
 void torre_de_controlo(){
     pthread_t fuel_thread;
     pthread_t msgq_thread;
     int thread_fuel_id;
     int thread_msgq_id;
-    char str[1000];
-    printf("PID da torre de controlo: %d\n",getpid());
-    sprintf(str,"PID da torre de controlo: %d\n",getpid());
-    ficheiro_log(str);
+    fila_arrivals=malloc(sizeof(struct arrival));
+    fila_arrivals->next=NULL;
+    fila_departures=malloc(sizeof(struct departure));
+    fila_departures->next=NULL;
+    //char str[1000];
+    //printf("PID da torre de controlo: %d\n",getpid());
+    //sprintf(str,"PID da torre de controlo: %d\n",getpid());
+    //ficheiro_log(str);
 
     //Thread que atualiza o combustível
     pthread_create(&fuel_thread,NULL,thread_fuel,&thread_fuel_id);
 
     //Thread que lê a msg queue e devolve ao voo o seu espaço na shared memory
     pthread_create(&msgq_thread,NULL,msgq,&thread_msgq_id);
-
     
     pthread_join(msgq_thread,NULL);
     pthread_join(fuel_thread,NULL);
@@ -916,9 +983,6 @@ int inicia(){
 
     //THREAD que crias as outras threads
     pthread_create(&time_thread,NULL,thread_cria_voos,(void*)&time_thread_id);
-
-    //THREAD para mostrar o tempo atual ya dps apaga-se
-    pthread_create(&tempo_atual_thread,NULL,thread_controlo,(void*)&tempo_atual_thread_id);
 
     //THREAD para mostrar o tempo atual ya dps apaga-se
     pthread_create(&tempo_atual_thread,NULL,thread_controlo,&tempo_atual_thread_id);
