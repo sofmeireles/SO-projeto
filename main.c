@@ -659,6 +659,7 @@ void* thread_cria_voos(void* idp){
         if (atual_arrival->next!=NULL){
             int tempo_prox_arr =atual_arrival->next->init;
             if (tempo_atual == atual_arrival->next->init){
+		cria_threads_voo();
                 //MQ
                 msg.eta = atual_arrival->next->eta;
                 msg.fuel  = atual_arrival->next->fuel;
@@ -683,6 +684,7 @@ void* thread_cria_voos(void* idp){
             int tempo_prox_dep = atual_departure->next->init;
             if (tempo_atual == atual_departure->next->init){
                 //printf("init_dep: %d\n", atual_departure->next->init);
+		cria_threads_voo();
                 //MQ
                 msg.takeoff = atual_departure->next->takeoff;
                 msg.mtype = 1;
@@ -693,7 +695,6 @@ void* thread_cria_voos(void* idp){
                   printf("erro a enviar a mensagem\n");
                   perror(0);
                 }
-                cria_threads_voo();
                 if (atual_departure->next->next!=NULL){
                     atual_departure=atual_departure->next;
                     printf("tempo espera: %d\n",atual_departure->next->init - tempo_atual);
