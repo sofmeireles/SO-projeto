@@ -631,7 +631,7 @@ void* thread_cria_voos(void* idp){
                 //printf("init_dep: %d\n", atual_departure->next->init);
                 //MQ
                 msg.takeoff = atual_departure->next->takeoff;
-                msg.mtype = 2;
+                msg.mtype = 1;
                 strcpy(msg.code,atual_departure->next->code);
                 msg.fuel=-1;
                 printf("sending(%d)\n", msg.takeoff);
@@ -774,7 +774,7 @@ void* msgq(void* arg){
                 if((shm_departures+i)->slot == 0){
                     (shm_departures+i)->slot = 1;//"ocupar" o slot da shm
                     (shm_departures+i)->takeoff=msg.takeoff;
-                    msg.mtype = 1;
+                    msg.mtype = 2;
                     strcpy((shm_departures+i)->code,msg.code);
                     // ENVIAR PRA MSQ ->  shm_voos+i;
                     msg.ids=(int)(shm_arrivals+i);
