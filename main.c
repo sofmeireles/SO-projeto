@@ -22,8 +22,9 @@
 #include <signal.h>
 #include <time.h>
 #define PIPE_NAME "/tmp/input_pipe"
-#define MAX_THREADS 5000
-#define MAX_ARRIVALS 5000
+#define MAX_THREADS 20
+#define MAX_ARRIVALS 10
+#define MAX_DEPARTURES 10
 
 //structs
 struct departure{
@@ -31,7 +32,7 @@ struct departure{
     int init;
     int takeoff;
     int holding;
-    int slot_shm;
+    int slot;
     struct departure * next;
 };
 
@@ -88,7 +89,8 @@ int qtd_max_chegadas;
 int qtd_max_voos;
 int message_queue;
 int shmid;
-int shmid2;
+int shmid_arr;
+int shmid_dep;
 int j;
 time_t time_init;
 pthread_t thread_voos[MAX_THREADS];
@@ -96,6 +98,7 @@ int ids[MAX_THREADS];
 struct arrival* header_arrivals;
 struct departure* header_departures;
 struct arrival* shm_arrivals;
+struct departure* shm_departures;
 struct voo* header_voos;
 pthread_mutex_t mutex;
 pthread_mutex_t mutex2;
@@ -225,7 +228,7 @@ void add_departure(struct departure* node){
     novo_voo->dep=node;
     novo_voo->next=NULL;
     add_voo(novo_voo);
-    printf("added departure\n");
+    //printf("added departure\n");
 }
 
 void add_arrival(struct arrival* node){
@@ -247,7 +250,7 @@ void add_arrival(struct arrival* node){
     novo_voo->next=NULL;
     add_voo(novo_voo);
     sem_post(mutexx);
-    printf("added arrival\n");
+    //printf("added arrival\n");
 }
 
 void remove_arrival(char* nome){
@@ -625,11 +628,11 @@ void* thread_cria_voos(void* idp){
         if (atual_departure->next != NULL){
             int tempo_prox_dep = atual_departure->next->init;
             if (tempo_atual == atual_departure->next->init){
-                printf("init_dep: %d\n", atual_departure->next->init);
+                //printf("init_dep: %d\n", atual_departure->next->init);
                 //MQ
                 msg.takeoff = atual_departure->next->takeoff;
                 msg.mtype = 2;
-                strcpy(msg.code,atual_arrival->next->code);
+                strcpy(msg.code,atual_departure->next->code);
                 msg.fuel=-1;
                 printf("sending(%d)\n", msg.takeoff);
                 if( (msgsnd(message_queue, &msg, sizeof(msg)-sizeof(long), 0)) == -1){
@@ -637,14 +640,6 @@ void* thread_cria_voos(void* idp){
                   perror(0);
                 }
                 cria_threads_voo();
-                //MQ
-                msg.takeoff = atual_departure->next->takeoff;
-                msg.mtype = 2;
-                printf("sending(%d)\n", msg.takeoff);
-                if( (msgsnd(message_queue, &msg, sizeof(msg)-sizeof(long), 0)) == -1){
-                  printf("erro a enviar a mensagem\n");
-                  perror(0);
-                }
                 if (atual_departure->next->next!=NULL){
                     atual_departure=atual_departure->next;
                     printf("tempo espera: %d\n",atual_departure->next->init - tempo_atual);
@@ -677,13 +672,13 @@ void cria_memoria(){
         printf("Memoria mapeada\n");
     }
     printf("qtd max: %d\n",qtd_max_voos);
-    shmid2 = shmget(IPC_PRIVATE, sizeof(struct arrival)*MAX_THREADS, IPC_CREAT | 0766);
-    if(shmid2 < 0){
+    shmid_arr = shmget(IPC_PRIVATE, sizeof(struct arrival)*MAX_THREADS, IPC_CREAT | 0766);
+    if(shmid_arr < 0){
         printf("ERRO na criacao da memoria2\n");
         exit(-1);
     }
 
-    shm_arrivals = (struct arrivals*)shmat(shmid, NULL, 0);
+    shm_arrivals = (struct arrival*)shmat(shmid, NULL, 0);
     if(shm_arrivals == NULL){
         printf("ERRO no mapeamento da memoria\n");
         exit(-1);
@@ -695,6 +690,21 @@ void cria_memoria(){
     for(int i=0;i<MAX_THREADS;i++){
         (shm_arrivals+i)->init=-1; //inicializar o init a -1 (ficar vazio)
     }
+
+    shmid_dep = shmget(IPC_PRIVATE, sizeof(struct departure)*MAX_THREADS, IPC_CREAT | 0766);
+    if(shmid_dep < 0){
+        printf("ERRO na criacao da memoria2\n");
+        exit(-1);
+    }
+
+    shm_departures = (struct departure*)shmat(shmid, NULL, 0);
+    if(shm_departures == NULL){
+        printf("ERRO no mapeamento da memoria\n");
+        exit(-1);
+    }
+    else{
+        printf("Memoria mapeada\n");
+    }
 }
 
 void sigint(int signum){
@@ -705,7 +715,8 @@ void sigint(int signum){
     print_arrivals(header_arrivals);
     //limpar memoria partilhada
     shmctl(shmid, IPC_RMID, NULL);
-    shmctl(shmid2, IPC_RMID, NULL);
+    shmctl(shmid_arr, IPC_RMID, NULL);
+    shmctl(shmid_dep,IPC_RMID, NULL);
     printf("Limpou a memoria\n");
 
     //limpar mutexx
@@ -739,7 +750,7 @@ void* msgq(void* arg){
             printf("lido da MQ(%d takeoff, %d eta, %d fuel)\n", msg.takeoff, msg.eta, msg.fuel);
         }
         if(msg.fuel != -1){
-            for(i=0;i<MAX_THREADS;i++){
+            for(i=0;i<MAX_ARRIVALS;i++){
                 if((shm_arrivals+i)->slot == 0){
                     (shm_arrivals+i)->slot = 1;//"ocupar" o slot da shm
                     (shm_arrivals+i)->fuel=msg.fuel;
@@ -747,6 +758,26 @@ void* msgq(void* arg){
                     msg.ids=(int)(shm_arrivals+i);
                     strcpy((shm_arrivals+i)->code,msg.code);
                     // ENVIAR PRA MSQ ->  shm_voos+i;
+                    if( (msgsnd(message_queue, &msg, sizeof(msg)-sizeof(long), 0)) == -1){
+                        printf("Erro a responder da torre");
+                        perror(0);
+                    }
+                    break;
+                }
+                else{
+                    i++;
+                }
+            }
+        }
+        if(msg.fuel == -1){
+            for(i=0;i<MAX_DEPARTURES;i++){
+                if((shm_departures+i)->slot == 0){
+                    (shm_departures+i)->slot = 1;//"ocupar" o slot da shm
+                    (shm_departures+i)->takeoff=msg.takeoff;
+                    msg.mtype = 1;
+                    strcpy((shm_departures+i)->code,msg.code);
+                    // ENVIAR PRA MSQ ->  shm_voos+i;
+                    msg.ids=(int)(shm_arrivals+i);
                     if( (msgsnd(message_queue, &msg, sizeof(msg)-sizeof(long), 0)) == -1){
                         printf("Erro a responder da torre");
                         perror(0);
