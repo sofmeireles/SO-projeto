@@ -162,13 +162,13 @@ void print_voos(){
             printf("ARRIVAL %s init:%d eta:%d fuel:%d\n",atual->next->arr->code,atual->next->arr->init,atual->next->arr->eta,atual->next->arr->fuel);
 
         }
-        atual=atual->next; 
+        atual=atual->next;
     }
 }
 
 void add_voo(struct voo* node){
     struct voo* atual = header_voos;
-    
+
     while(atual->next != NULL){
         atual=atual->next;
     }
@@ -179,11 +179,10 @@ void add_voo(struct voo* node){
 /*
 void remove_arrival();
 void remove_departure();
-
 void remove_voo(char* nome){
     struct voo* atual=header_voos->next;
     struct voo* anterior=header_voos;
-    while(atual->next != NULL){ 
+    while(atual->next != NULL){
         if(atual->arr != NULL){
             if(strcmp(atual->arr->code,nome)==0){
                 anterior->next=atual->next;
@@ -268,7 +267,7 @@ void remove_arrival(char* nome){
     struct arrival* atual=header_arrivals->next;
     struct arrival* anterior=header_arrivals;
 
-    while(atual->next != NULL){ 
+    while(atual->next != NULL){
         if(strcmp(atual->code,nome)==0){
             anterior->next=atual->next;
             free(atual);
@@ -291,7 +290,7 @@ void remove_departure(char* nome){
     struct departure* atual=header_departures->next;
     struct departure* anterior=header_departures;
 
-    while(atual->next != NULL){ 
+    while(atual->next != NULL){
         if(strcmp(atual->code,nome)==0){
             anterior->next=atual->next;
             free(atual);
@@ -369,7 +368,7 @@ void read_config(){
     }
 
     while(fgets(linha,30,configs)){
-        if(i==0){ 
+        if(i==0){
             unidade=atoi(linha);
             if (unidade==0)
                 unidade=500;
@@ -506,7 +505,7 @@ bool validacao(char * mensagem){
             if(strcmp(token,"init:")!=0) return false;
         }
         else if(i==3 && verifica_numero(token,strlen(token),0)==true){
-       
+
             if(atoi(token) < (int)(time(NULL)-time_init)){
                return false;
             }
@@ -563,7 +562,7 @@ void le_comandos(){
     }
     else{
 	memset(comando,0,1000);
-	
+
         read(fd,comando,1000);
         strcpy(cmd,comando);
         if (validacao(comando)==true){
@@ -574,9 +573,9 @@ void le_comandos(){
         	sprintf(str,"WRONG COMMAND => %s",cmd);
             ficheiro_log(str);
         }
-       
+
     }
-    
+
 }
 
 //função de operação das threads
@@ -585,8 +584,8 @@ void *gere_voos(void* arg){
     printf("criou um voo\n");
     while(1){
       if((msgrcv(message_queue, &msg, sizeof(msg)-sizeof(long), 2, 0)) != -1){
-        printf("Recebi de volta %d\n", msg.ids);
-        printf("Recebi de volta %d, %d, %d \n", msg.fuel, msg.eta, msg.takeoff);
+        printf("[VOOS]: Recebi de volta %d\n", msg.ids);
+        printf("[VOOS]: Recebi de volta %d, %d, %d \n", msg.fuel, msg.eta, msg.takeoff);
         pthread_exit(NULL);
       }
     }
@@ -655,55 +654,56 @@ void* thread_cria_voos(void* idp){
     struct departure* atual_departure=header_departures;
     voos_send_msg msg;
     while(1){
-        int tempo_atual = (int)(time(NULL)-time_init);
-        if (atual_arrival->next!=NULL){
-            int tempo_prox_arr =atual_arrival->next->init;
-            if (tempo_atual == atual_arrival->next->init){
-		cria_threads_voo();
-                //MQ
-                msg.eta = atual_arrival->next->eta;
-                msg.fuel  = atual_arrival->next->fuel;
-                strcpy(msg.code,atual_arrival->next->code);
-                msg.mtype = 1;
-                printf("sending(%d and %d and %s)\n", msg.eta, msg.fuel, msg.code);
-                if( (msgsnd(message_queue, &msg, sizeof(msg)-sizeof(long), 0)) == -1){
-                  printf("erro a enviar a mensagem\n");
-                  perror(0);
-                }
-                if (atual_arrival->next->next!=NULL){
-                    atual_arrival=atual_arrival->next;
-                    printf("tempo espera: %d\n",atual_arrival->next->init - tempo_atual);
-                    sleep(tempo_prox_arr - tempo_atual);
-                }
-                else{
-                    sleep(1);
-                }
-            }
-        }
-        if (atual_departure->next != NULL){
-            int tempo_prox_dep = atual_departure->next->init;
-            if (tempo_atual == atual_departure->next->init){
-                //printf("init_dep: %d\n", atual_departure->next->init);
-		cria_threads_voo();
-                //MQ
-                msg.takeoff = atual_departure->next->takeoff;
-                msg.mtype = 1;
-                strcpy(msg.code,atual_departure->next->code);
-                msg.fuel=-1;
-                printf("sending(%d)\n", msg.takeoff);
-                if( (msgsnd(message_queue, &msg, sizeof(msg)-sizeof(long), 0)) == -1){
-                  printf("erro a enviar a mensagem\n");
-                  perror(0);
-                }
-                if (atual_departure->next->next!=NULL){
-                    atual_departure=atual_departure->next;
-                    printf("tempo espera: %d\n",atual_departure->next->init - tempo_atual);
-                    sleep(tempo_prox_dep - tempo_atual);
-                }
-                else{
-                    sleep(1);
-                }
-            }
+      int tempo_atual = (int)(time(NULL)-time_init);
+      if (atual_arrival->next!=NULL){
+          int tempo_prox_arr =atual_arrival->next->init;
+          if (tempo_atual == atual_arrival->next->init){
+              printf("[VOOS]: init_arr: %d\n", atual_arrival->next->init);
+              cria_threads_voo();
+              //MQ
+              msg.eta = atual_arrival->next->eta;
+              msg.fuel  = atual_arrival->next->fuel;
+              msg.takeoff = -1;
+              msg.mtype = 1;
+              printf("[VOOS]: sending(%d and %d)\n", msg.eta, msg.fuel);
+              if( (msgsnd(message_queue, &msg, sizeof(msg)-sizeof(long), 0)) == -1){
+                printf("erro a enviar a mensagem\n");
+                perror(0);
+              }
+              if (atual_arrival->next->next!=NULL){
+                  atual_arrival=atual_arrival->next;
+                  printf("GESTOR DE SISTEMA -> tempo espera: %d\n",atual_arrival->next->init - tempo_atual);
+                  sleep(tempo_prox_arr - tempo_atual);
+              }
+              else{
+                  sleep(1);
+              }
+          }
+      }
+      if (atual_departure->next != NULL){
+          int tempo_prox_dep = atual_departure->next->init;
+          if (tempo_atual == atual_departure->next->init){
+              printf("init_dep: %d\n", atual_departure->next->init);
+              cria_threads_voo();
+              //MQ
+              msg.takeoff = atual_departure->next->takeoff;
+              msg.fuel = -1;
+              msg.eta = -1;
+              msg.mtype = 1;
+              printf("sending(%d)\n", msg.takeoff);
+              if( (msgsnd(message_queue, &msg, sizeof(msg)-sizeof(long), 0)) == -1){
+                printf("erro a enviar a mensagem\n");
+                perror(0);
+              }
+              if (atual_departure->next->next!=NULL){
+                  atual_departure=atual_departure->next;
+                  printf("tempo espera: %d\n",atual_departure->next->init - tempo_atual);
+                  sleep(tempo_prox_dep - tempo_atual);
+              }
+              else{
+                  sleep(1);
+              }
+          }
         }
 
     }
@@ -762,7 +762,7 @@ void cria_memoria(){
     }
 }
 
-void sigint(int signum){
+void sigtstp(int signum){
     wait(NULL);
     printf("\n######### Departures #########\n");
     print_departures(header_departures);
@@ -790,6 +790,19 @@ void sigint(int signum){
     exit(0);
 }
 
+void sigint(int signum){
+    printf("\n");
+    printf("Numero total de voos criados: %d \n", data->num_voos_cria);
+    printf("Numero total de voos que aterraram: %d\n", data->num_voos_atr);
+    printf("Tempo médio de espera: %d\n", data->temp_de_esp_atr);
+    printf("Numero total de voos que descolaram: %d\n", data->num_voos_desc);
+    printf("Tempo médio de espera para descolar: %d\n", data->temp_de_esp_desc);
+    printf("Número médio de manobras de holding por voo de aterragem: %d\n", data->m_mh_atr),
+    printf("Numero médio de manobras de holding por voo em estado de emergencia: %d\n", data->m_mh_hurg);
+    printf("Numero de voos redirecionados para outro aeroporto: %d\n", data->num_voos_red);
+    printf("Numero de voos rejeitados pela Torre de Controlo: %d\n", data->voos_rejeitados);
+}
+
 void cria_mensage_queue(){
   if ((message_queue = msgget(IPC_PRIVATE, IPC_CREAT | 0700))==-1){
       printf("Erro ao criar a message queue!\n");
@@ -801,8 +814,8 @@ void* msgq(void* arg){
     voos_send_msg msg;
     int i;
     while(1){
-        if(msgrcv(message_queue, &msg, sizeof(msg)-sizeof(long), 1, 0) != -1){
-            printf("lido da MQ(%d takeoff, %d eta, %d fuel)\n", msg.takeoff, msg.eta, msg.fuel);
+        if((msgrcv(message_queue, &msg, sizeof(msg)-sizeof(long), 1, 0)) != -1){
+            printf("[TORRE DE CONTROLO]: lido da MQ(%d takeoff, %d eta, %d fuel)\n", msg.takeoff, msg.eta, msg.fuel);
         }
         if(msg.fuel != -1){
             for(i=0;i<MAX_ARRIVALS;i++){
@@ -835,7 +848,7 @@ void* msgq(void* arg){
                     strcpy((shm_departures+i)->code,msg.code);
                     add_fila_departures(shm_departures);
                     // ENVIAR PRA MSQ ->  shm_voos+i;
-                    msg.ids=(int)(shm_arrivals+i);
+                    msg.ids=(int)(shm_departures+i);
                     if( (msgsnd(message_queue, &msg, sizeof(msg)-sizeof(long), 0)) == -1){
                         printf("Erro a responder da torre");
                         perror(0);
@@ -873,7 +886,7 @@ void *thread_fuel(void* arg){
                     redireciona((shm_arrivals+i)->code,i);
                     pthread_mutex_unlock(&mutex_fuel);
                 }
-                //printf("code: %s fuel: %d\n",(shm_arrivals+i)->code,(shm_arrivals+i)->fuel);          
+                //printf("code: %s fuel: %d\n",(shm_arrivals+i)->code,(shm_arrivals+i)->fuel);
                 (shm_arrivals+i)->fuel--;
                 //print_arr_shm(shm_arrivals);
             }
@@ -882,16 +895,66 @@ void *thread_fuel(void* arg){
     }
 }
 
+int get_departure(struct departure* dep1, struct departure* dep2) {
+    struct departure *atual = fila_departures->next;
+    if (atual == NULL) return 0; //caso não haja voos
+    *dep1 = *atual;
+
+    if(atual->next != NULL) {
+        *dep2 = *atual->next;
+        return 2; //caso consiga os 2 voos
+    }
+    return 1; //caso só haja um voo
+}
+
+int get_arrival(struct arrival* arr1, struct arrival* arr2){
+    struct arrival *atual = fila_arrivals->next;
+    if (atual == NULL) return 0; //caso não haja voos
+    *arr1 = *atual;
+
+    if(atual->next != NULL) {
+        *arr2 = *atual->next;
+        return 2; //caso consiga os 2 voos
+    }
+    return 1; //caso só haja um voo
+}
+
+void *pist(void* arg){
+    struct departure* dep1=malloc(sizeof(struct departure));
+    struct departure* dep2=malloc(sizeof(struct departure));
+    struct departure* arr1=malloc(sizeof(struct arrival));
+    struct departure* arr2=malloc(sizeof(struct arrival));
+
+    int result=get_departure(depT,depY);
+                if(result==0){
+                    printf("Sem voos!!!\n");
+                }
+                else if(result==1){
+                    printf("Um voo!!\n");
+                    print_dep(depT);
+                }
+                else if(result==2){
+                    printf("Dois voos!!\n");
+                    print_dep(depT);
+                    print_dep(depY);
+                }
+}
+
 
 void torre_de_controlo(){
     pthread_t fuel_thread;
     pthread_t msgq_thread;
+    pthread_t pist_thread;
     int thread_fuel_id;
     int thread_msgq_id;
+    int thread_pist_id;
     fila_arrivals=malloc(sizeof(struct arrival));
     fila_arrivals->next=NULL;
     fila_departures=malloc(sizeof(struct departure));
     fila_departures->next=NULL;
+    signal(SIGINT, sigint);
+
+
     //char str[1000];
     //printf("PID da torre de controlo: %d\n",getpid());
     //sprintf(str,"PID da torre de controlo: %d\n",getpid());
@@ -902,9 +965,13 @@ void torre_de_controlo(){
 
     //Thread que lê a msg queue e devolve ao voo o seu espaço na shared memory
     pthread_create(&msgq_thread,NULL,msgq,&thread_msgq_id);
-    
+
+    //Thread que gere as pistas do aeroporto
+    pthread_create(&pist_thread,NULL,pist,&thread_pist_id);
+
     pthread_join(msgq_thread,NULL);
     pthread_join(fuel_thread,NULL);
+    pthread_join(pist_thread,NULL);
 }
 
 
@@ -932,7 +999,8 @@ int inicia(){
     int time_thread_id;
     int tempo_atual_thread_id;
     char str[1000];
-    signal(SIGINT, sigint);
+    signal(SIGTSTP, sigtstp);
+    signal(SIGINT, SIG_IGN);
     time_init = time(NULL);
     //printf("time: %d",time_init);
     header_arrivals=malloc(sizeof(struct arrival));
@@ -961,6 +1029,7 @@ int inicia(){
 
     //MQ
     cria_mensage_queue();
+
 
     torre_controlo=fork();
 
@@ -1000,7 +1069,7 @@ int inicia(){
 
 
 int main() {
-    
+
     inicia();
     fclose(f_log);
     wait(NULL);
